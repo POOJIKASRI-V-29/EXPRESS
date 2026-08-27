@@ -1,0 +1,65 @@
+# EXPRESS OS — local development stack.
+#
+# Host ports live in a dedicated 4310-4312 block so EXPRESS never collides with
+# another project on the usual 3000/8000/5432. Container-internal ports are
+# unchanged, so nothing inside the images needs to know about this.
+# Override any of them in .env.
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-express}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-express}
+      POSTGRES_DB: ${POSTGRES_DB:-express}
+    ports:
+      - "${EXPRESS_DB_PORT:-4312}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-express} -d ${POSTGRES_DB:-express}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  backend:
+    build: ./backend
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql+psycopg2://${POSTGRES_USER:-express}:${POSTGRES_PASSWORD:-express}@db:5432/${POSTGRES_DB:-express}
+      SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
+      FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:4310}
+      LOCAL_TZ: ${LOCAL_TZ:-UTC}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      JOCASTA_MODEL: ${JOCASTA_MODEL:-claude-opus-5}
+      DEMO_EMAIL: ${DEMO_EMAIL:-demo@express.os}
+      DEMO_PASSWORD: ${DEMO_PASSWORD:-expressdemo}
+      ENV: ${ENV:-development}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID:-}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET:-}
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET:-}
+      OAUTH_REDIRECT_BASE: ${OAUTH_REDIRECT_BASE:-http://localhost:4311}
+    ports:
+      - "${EXPRESS_API_PORT:-4311}:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/health',timeout=3).status==200 else 1)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+
+  frontend:
+    build: ./frontend
+    depends_on:
+      - backend
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:4311}
+    ports:
+      - "${EXPRESS_WEB_PORT:-4310}:3000"
+
+volumes:
+  pgdata:

@@ -1,0 +1,4 @@
+Migration flow:
+  alembic revision --autogenerate -m "init"
+  alembic upgrade head
+Models are the source of truth; env.py injects DATABASE_URL from app settings.
