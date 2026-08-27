@@ -5,6 +5,10 @@ import { Shell } from "@/components/shell";
 import { Atmosphere } from "@/components/atmosphere";
 import { Icon } from "@/components/icons";
 import { JocastaThinking } from "@/components/sense";
+import { VoiceOrb, type VoiceState } from "@/components/voice-orb";
+import { VoiceSettingsModal } from "@/components/voice-settings";
+import { useVoice } from "@/lib/useVoice";
+import { loadVoiceSettings, saveVoiceSettings, DEFAULT_VOICE_SETTINGS, type VoiceSettings } from "@/lib/voice";
 import { useRequireAuth } from "@/lib/auth";
 import { api } from "@/lib/api";
 import { titleCase } from "@/lib/format";
@@ -34,6 +38,36 @@ const STAGES = [
   "Working out which threads matter…",
   "Choosing what to do…",
 ];
+
+/** Turn a raw SpeechRecognition error code into something a person can act on. */
+function speechErrorText(code: string | null): string {
+  switch (code) {
+    case "not-allowed":
+    case "service-not-allowed":
+      return "Microphone access is blocked. Allow it in your browser settings, then tap again.";
+    case "no-speech":
+      return "I didn't catch anything — tap the orb and try again.";
+    case "audio-capture":
+      return "No microphone was found on this device.";
+    case "network":
+      return "The speech service is unreachable right now. You can type instead.";
+    case "aborted":
+      return "Listening stopped.";
+    case "unsupported":
+      return "Voice input isn't supported in this browser. You can type, and I can still read replies aloud.";
+    default:
+      return code ? "Voice input hit a problem — you can type instead." : "";
+  }
+}
+
+/** What JOCasta should say out loud. A plan awaiting approval is never spoken as
+ *  done — voice cannot approve a destructive action; that still happens on screen. */
+function spokenReply(r: JocastaResult): string {
+  if (r.pending) {
+    return `${r.reply} I need your confirmation on screen before I make that change.`;
+  }
+  return r.reply;
+}
 
 export default function JocastaPage() {
   const { user, ready } = useRequireAuth();

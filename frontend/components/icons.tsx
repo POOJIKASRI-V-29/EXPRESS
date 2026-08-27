@@ -34,5 +34,7 @@ export const Icon = {
   link: (p: any) => <S {...p}><path d="M10 13.5a4 4 0 0 0 5.7 0l2.8-2.8a4 4 0 1 0-5.7-5.7L11.4 6.4" /><path d="M14 10.5a4 4 0 0 0-5.7 0l-2.8 2.8a4 4 0 1 0 5.7 5.7l1.4-1.4" /></S>,
   x: (p: any) => <S {...p}><path d="M6 6 18 18M18 6 6 18" /></S>,
   chev: (p: any) => <S {...p}><path d="m9 6 6 6-6 6" /></S>,
+  gear: (p: any) => <S {...p}><circle cx="12" cy="12" r="3.2" /><path d="M12 2.5v3M12 18.5v3M2.5 12h3M18.5 12h3M4.9 4.9 7 7M17 17l2.1 2.1M19.1 4.9 17 7M7 17l-2.1 2.1" /></S>,
+  stop: (p: any) => <S {...p}><rect x="6" y="6" width="12" height="12" rx="2" /></S>,
 };
 export type IconName = keyof typeof Icon;
