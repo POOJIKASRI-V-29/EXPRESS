@@ -21,7 +21,19 @@ class Course(Base, TimestampMixin):
     name = Column(String, nullable=False)
     faculty = Column(String, default="")
     room = Column(String, default="")
-    attendance = Column(Integer, default=100)  # percent
+    # Credit weight, as printed on the course sheet. 0 means "not recorded"
+    # rather than "worth nothing", so it is simply not shown when unset.
+    credits = Column(Integer, default=0)
+    # Attendance is counted, not typed. `attendance` stays as a cached percent
+    # so list endpoints don't recompute per row (same pattern as Habit.streak),
+    # but attended/total are the truth and the percent is always recomputed
+    # from them on write.
+    attendance = Column(Integer, default=0)      # cached percent, derived
+    attended_classes = Column(Integer, default=0)
+    total_classes = Column(Integer, default=0)
+    # A pasted folder/file link. EXPRESS does not sync Drive — it just opens
+    # what the user saved.
+    drive_url = Column(String, default="")
 
 
 class Class(Base, TimestampMixin):
@@ -69,3 +81,30 @@ class Exam(Base, TimestampMixin):
     type = Column(String, default="cat")       # cat|fat|internal
     date = Column(UTCDateTime(), nullable=False)
     room = Column(String, default="")
+
+
+class CourseModule(Base, TimestampMixin):
+    """A unit of a course — "Module 3", "Unit II". Holds the concepts."""
+    __tablename__ = "course_modules"
+    id = pk(); user_id = user_fk()
+    course_id = Column(GUID(), ForeignKey("courses.id", ondelete="CASCADE"), index=True)
+    name = Column(String, nullable=False)
+    order = Column("module_order", Integer, default=0)
+    __table_args__ = (Index("ix_course_modules_course_order", "course_id", "module_order"),)
+
+
+class CourseTopic(Base, TimestampMixin):
+    """One concept inside a module, with a completion state that persists.
+
+    Course progress is derived by counting these, so ticking one is the only
+    thing that moves a course forward — there is no separate progress field to
+    drift out of sync.
+    """
+    __tablename__ = "course_topics"
+    id = pk(); user_id = user_fk()
+    module_id = Column(GUID(), ForeignKey("course_modules.id", ondelete="CASCADE"), index=True)
+    name = Column(String, nullable=False)
+    done = Column(Boolean, default=False)
+    order = Column("topic_order", Integer, default=0)
+    completed_at = Column(UTCDateTime(), nullable=True)
+    __table_args__ = (Index("ix_course_topics_module_order", "module_id", "topic_order"),)

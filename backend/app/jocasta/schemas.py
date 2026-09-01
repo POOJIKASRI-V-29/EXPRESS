@@ -6,11 +6,16 @@ gate. Anything that doesn't validate is rejected before it can touch the DB.
 from datetime import datetime
 from decimal import Decimal
 from typing import Optional
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class EmptyArgs(BaseModel):
     pass
+
+
+class ScheduleArgs(BaseModel):
+    """Which day's classes. Omit for today."""
+    day: Optional[str] = None      # "monday" | "tomorrow" | "today"
 
 
 class ProposePlanArgs(BaseModel):
@@ -52,6 +57,17 @@ class FindTaskArgs(BaseModel):
 
 class CompleteByTitleArgs(BaseModel):
     query: str
+
+
+class DeleteTaskArgs(BaseModel):
+    """Delete a planner item the user named, or referred to as "that"."""
+    query: str
+
+
+class RescheduleByNameArgs(BaseModel):
+    """Move a planner item the user named, without needing its id."""
+    query: str
+    due_at: datetime
 
 
 # ---- Reminders ----
@@ -106,6 +122,66 @@ class CreateAssignmentArgs(BaseModel):
 class MarkAttendanceArgs(BaseModel):
     course: str
     attended: bool = True
+
+
+class SetAttendanceArgs(BaseModel):
+    """Correct the raw figures outright."""
+    course: str
+    attended_classes: int
+    total_classes: int
+
+
+class CreateCourseArgs(BaseModel):
+    name: str
+    code: str = ""
+    faculty: str = ""
+    credits: int = 0
+    attended_classes: int = 0
+    total_classes: int = 0
+
+
+class UpdateCourseArgs(BaseModel):
+    """Edit a course the user named. Only the fields given are changed."""
+    course: str
+    name: str | None = None
+    code: str | None = None
+    faculty: str | None = None
+    room: str | None = None
+    credits: int | None = None
+
+
+class ScheduleClassArgs(BaseModel):
+    """A recurring weekly slot for a course. Day is 0=Mon .. 6=Sun."""
+    course: str
+    day_of_week: int = Field(0, ge=0, le=6)
+    start_time: str = "09:00"          # "HH:MM", 24h
+    end_time: str = "10:30"
+    room: str = ""
+
+
+class RescheduleClassArgs(BaseModel):
+    """Move a course's weekly slot. Fields left out keep their current value."""
+    course: str
+    day_of_week: int | None = Field(None, ge=0, le=6)
+    start_time: str | None = None
+    end_time: str | None = None
+    room: str | None = None
+
+
+class CourseNameArgs(BaseModel):
+    course: str
+
+
+class SetDriveArgs(BaseModel):
+    course: str
+    url: str
+
+
+class CompleteTopicArgs(BaseModel):
+    """Tick a course concept the user named in words."""
+    topic: str
+    course: Optional[str] = None
+    done: bool = True
 
 
 # ---- Learning ----

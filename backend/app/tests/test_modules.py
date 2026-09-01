@@ -9,21 +9,127 @@ def iso(**kw):
 # ---------------------------------------------------------------- college
 def test_college_course_timetable_and_attendance(client, auth):
     c = client.post("/college/courses", json={"name": "Database Systems", "code": "CS303",
-                                              "attendance": 80}, headers=auth)
+                                              "attended_classes": 23, "total_classes": 28},
+                    headers=auth)
     assert c.status_code == 201
     cid = c.json()["id"]
+    assert c.json()["attendance"] == 82           # 23/28 = 82.14 -> 82
 
     cl = client.post("/college/classes", json={"course_id": cid, "day_of_week": 2,
-                                               "start_time": "09:00", "end_time": "10:30"}, headers=auth)
+                                               "start_time": "09:00", "end_time": "10:30"},
+                     headers=auth)
     assert cl.status_code == 201
-
     before = client.get("/college", headers=auth).json()
     assert any(t["course"] == "Database Systems" for t in before["timetable"])
 
-    missed = client.post(f"/college/courses/{cid}/attendance", json={"attended": False}, headers=auth)
-    assert missed.json()["attendance"] < 80
-    present = client.post(f"/college/courses/{cid}/attendance", json={"attended": True}, headers=auth)
-    assert present.json()["attendance"] == 80   # one miss then one attend nets out
+    # A missed class still counts as held — that is why attendance falls.
+    missed = client.post(f"/college/courses/{cid}/attendance",
+                         json={"attended": False}, headers=auth).json()
+    assert (missed["attended_classes"], missed["total_classes"]) == (23, 29)
+    assert missed["attendance"] == 79
+
+    attended = client.post(f"/college/courses/{cid}/attendance",
+                           json={"attended": True}, headers=auth).json()
+    assert (attended["attended_classes"], attended["total_classes"]) == (24, 30)
+    assert attended["attendance"] == 80
+
+
+def test_attendance_can_be_undone_and_corrected(client, auth):
+    cid = client.post("/college/courses", json={"name": "OS", "attended_classes": 10,
+                                                "total_classes": 10}, headers=auth).json()["id"]
+    client.post(f"/college/courses/{cid}/attendance", json={"attended": False}, headers=auth)
+    undone = client.post(f"/college/courses/{cid}/attendance/undo",
+                         json={"attended": False}, headers=auth).json()
+    assert (undone["attended_classes"], undone["total_classes"]) == (10, 10)
+
+    fixed = client.patch(f"/college/courses/{cid}/attendance",
+                         json={"attended_classes": 18, "total_classes": 20},
+                         headers=auth).json()
+    assert fixed["attendance"] == 90
+
+    # Attended can never exceed held.
+    clamped = client.patch(f"/college/courses/{cid}/attendance",
+                           json={"attended_classes": 99, "total_classes": 20},
+                           headers=auth).json()
+    assert clamped["attended_classes"] == 20 and clamped["attendance"] == 100
+
+
+def test_a_course_with_no_classes_held_is_not_at_risk(client, auth):
+    """0% because nothing has happened yet is "no data", not a warning."""
+    client.post("/college/courses", json={"name": "Brand New"}, headers=auth)
+    row = client.get("/college", headers=auth).json()["courses"][0]
+    assert row["total_classes"] == 0
+    assert row["has_attendance_data"] is False
+    assert row["at_risk"] is False
+    assert not [s for s in client.get("/spider-sense", headers=auth).json()
+                if s["kind"] == "attendance"]
+
+
+def test_course_modules_topics_and_derived_progress(client, auth):
+    cid = client.post("/college/courses", json={"name": "DBMS"}, headers=auth).json()["id"]
+    ws = client.post(f"/college/courses/{cid}/modules",
+                     json={"name": "Module 1 — Fundamentals"}, headers=auth).json()
+    assert ws["modules"] == 1 and ws["progress"] == 0
+    mid = ws["module_list"][0]["id"]
+
+    for name in ("ER model", "Relational model", "Normalization", "Keys"):
+        ws = client.post(f"/college/modules/{mid}/topics", json={"name": name},
+                         headers=auth).json()
+    assert ws["topics_total"] == 4 and ws["progress"] == 0
+    assert ws["next_module"] == "Module 1 — Fundamentals"
+
+    first = ws["module_list"][0]["topics"][0]["id"]
+    ws = client.post(f"/college/topics/{first}/toggle", headers=auth).json()
+    assert ws["topics_done"] == 1 and ws["progress"] == 25   # counted, not stored
+
+    ws = client.post(f"/college/topics/{first}/toggle", headers=auth).json()
+    assert ws["topics_done"] == 0 and ws["progress"] == 0    # and it unticks
+
+    # Completion survives a reload — it is persisted, not local state.
+    again = client.get(f"/college/courses/{cid}", headers=auth).json()
+    assert again["topics_total"] == 4 and again["topics_done"] == 0
+
+
+def test_bulk_structure_creation_is_explicit(client, auth):
+    """The shape a confirmed syllabus proposal lands on."""
+    cid = client.post("/college/courses", json={"name": "DBMS"}, headers=auth).json()["id"]
+    ws = client.post(f"/college/courses/{cid}/structure", json={"modules": [
+        {"name": "Unit I", "topics": ["ER model", "Keys"]},
+        {"name": "Unit II", "topics": ["Normalization"]},
+    ]}, headers=auth).json()
+    assert ws["modules"] == 2 and ws["topics_total"] == 3
+    assert [m["name"] for m in ws["module_list"]] == ["Unit I", "Unit II"]
+
+    # Re-running appends rather than silently wiping.
+    ws = client.post(f"/college/courses/{cid}/structure",
+                     json={"modules": [{"name": "Unit III", "topics": []}]},
+                     headers=auth).json()
+    assert ws["modules"] == 3
+
+    # ...unless replacement is asked for explicitly.
+    ws = client.post(f"/college/courses/{cid}/structure",
+                     json={"modules": [{"name": "Only", "topics": ["x"]}], "replace": True},
+                     headers=auth).json()
+    assert ws["modules"] == 1 and ws["topics_total"] == 1
+
+
+def test_course_drive_link_is_stored_not_synced(client, auth):
+    cid = client.post("/college/courses", json={"name": "DBMS"}, headers=auth).json()["id"]
+    updated = client.patch(f"/college/courses/{cid}",
+                           json={"drive_url": "https://drive.google.com/drive/folders/abc"},
+                           headers=auth).json()
+    assert updated["drive_url"].endswith("/abc")
+    assert client.get(f"/college/courses/{cid}", headers=auth).json()["drive_url"].endswith("/abc")
+
+
+def test_course_workspace_is_user_scoped(client, auth):
+    other = client.post("/auth/register", json={"email": "cw@x.com", "password": "pass1234"}).json()
+    client.cookies.clear()
+    theirs = {"Authorization": f"Bearer {other['access_token']}"}
+    cid = client.post("/college/courses", json={"name": "Mine"}, headers=auth).json()["id"]
+    assert client.get(f"/college/courses/{cid}", headers=theirs).status_code == 404
+    assert client.post(f"/college/courses/{cid}/modules", json={"name": "x"},
+                       headers=theirs).status_code == 404
 
 
 def test_low_attendance_raises_a_signal(client, auth):
@@ -280,6 +386,9 @@ def test_planner_renders_times_on_the_users_clock_not_utc(client, auth, monkeypa
     """Storage is UTC; the day window is computed in the local zone. Formatting a
     stored instant directly renders the wrong hour for any non-UTC user — an item
     at 00:00 local displayed as 18:30. Times must be converted before display.
+
+    Deliberately built from the *current* local day rather than a fixed calendar
+    instant, so the test asserts the conversion rather than today's date.
     """
     from datetime import datetime, timedelta, timezone
     from app.core.config import settings
@@ -287,16 +396,24 @@ def test_planner_renders_times_on_the_users_clock_not_utc(client, auth, monkeypa
 
     monkeypatch.setattr(settings, "LOCAL_TZ", "Asia/Kolkata")   # UTC+5:30
 
-    # 18:30 UTC is 00:00 the next day in IST.
-    instant = datetime(2026, 8, 26, 18, 30, tzinfo=timezone.utc)
-    assert timeutils.local_hhmm(instant) == "00:00"
-    assert instant.strftime("%H:%M") == "18:30"                 # the old, wrong output
+    # The pure conversion: 18:30 UTC is midnight the next day in IST.
+    fixed = datetime(2026, 8, 26, 18, 30, tzinfo=timezone.utc)
+    assert timeutils.local_hhmm(fixed) == "00:00"
+    assert fixed.strftime("%H:%M") == "18:30", "this is the old, wrong output"
 
-    # And the endpoint agrees.
-    r = client.post("/tasks", json={"title": "Midnight IST task",
+    # And the endpoint agrees, for an instant guaranteed to sit in today's
+    # local window whatever the real date is.
+    instant = timeutils.start_of_local_day(0) + timedelta(hours=10)
+    expected = timeutils.local_hhmm(instant)
+    assert expected == "10:00", f"local day should start at midnight IST, got {expected}"
+
+    r = client.post("/tasks", json={"title": "Local clock task",
                                     "due_at": instant.isoformat()}, headers=auth)
     assert r.status_code == 201
     planner = client.get("/planner", headers=auth).json()
     rendered = [i["time"] for d in planner["days"] for i in d["items"]
-                if i["title"] == "Midnight IST task"]
-    assert rendered and rendered[0] == "00:00", f"planner rendered {rendered}"
+                if i["title"] == "Local clock task"]
+    assert rendered, "the task did not appear in the planner window"
+    assert rendered[0] == expected, (
+        f"planner rendered {rendered[0]}, expected {expected} "
+        f"(UTC would have been {instant.strftime('%H:%M')})")

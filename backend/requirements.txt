@@ -11,7 +11,13 @@ bcrypt==4.0.1
 PyJWT==2.10.1
 cryptography==44.0.0   # Fernet: OAuth tokens encrypted at rest
 python-multipart==0.0.19
+# JOCasta's conversational brain and LLM planner. Gemini is the active
+# provider; anthropic is kept so the previous provider still imports.
+# Held at 2.8.x: 2.9+ requires pydantic>=2.12.5, and bumping pydantic under
+# the whole validation layer is not part of a provider swap.
+google-genai==2.8.0
 anthropic==1.0.0
 httpx==0.28.1
+pypdf==6.16.2          # timetable PDF text extraction
 pytest==8.3.4
 tzdata==2024.2

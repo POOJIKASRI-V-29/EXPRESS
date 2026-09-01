@@ -160,18 +160,20 @@ export function ThreadRow({
     </>
   );
 
+  // A clickable row *is* the button — rather than a button wrapping the row
+  // with `display:contents`, which removes it from the accessibility tree in
+  // several browsers and leaves the control unreachable by screen readers.
   // Only render a button when it actually does something, so keyboard users
   // aren't given empty tab stops.
   return onClick ? (
-    <div className={`thread-row ${tone}`}>
-      <button
-        onClick={onClick}
-        style={{ display: "contents", textAlign: "left" }}
-        aria-label={typeof title === "string" ? title : undefined}
-      >
-        {body}
-      </button>
-    </div>
+    <button
+      type="button"
+      className={`thread-row interactive ${tone}`}
+      onClick={onClick}
+      aria-label={typeof title === "string" ? title : undefined}
+    >
+      {body}
+    </button>
   ) : (
     <div className={`thread-row ${tone}`}>{body}</div>
   );

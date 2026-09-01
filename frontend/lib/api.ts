@@ -68,12 +68,35 @@ export const api = {
   completeTask: (id: string) => post<T.Task>(`/tasks/${id}/complete`),
   reschedule: (id: string, due_at: string) => post<T.Task>(`/tasks/${id}/reschedule`, { due_at }),
   updateTask: (id: string, body: any) => patch<T.Task>(`/tasks/${id}`, body),
+  deleteTask: (id: string) => del(`/tasks/${id}`),
 
   spiderSense: () => request<T.Notification[]>("/spider-sense"),
   ackSpider: (id: string) => post<T.Notification>(`/spider-sense/${id}/acknowledge`),
   ackAllSpider: () => post<{ acknowledged: number }>("/spider-sense/acknowledge-all"),
 
-  jocasta: (text: string) => post<T.JocastaResult>("/jocasta/message", { text }),
+  jocasta: (text: string, attachment_token?: string | null) =>
+    post<T.JocastaResult>("/jocasta/message",
+      attachment_token ? { text, attachment_token } : { text }),
+
+  /** Uploads a file and returns what was read. Decides nothing; writes nothing. */
+  uploadAttachment: async (file: File): Promise<T.AttachmentInfo> => {
+    const form = new FormData();
+    form.append("file", file);
+    const token = getToken();
+    const res = await fetch(`${BASE}/jocasta/attachments`, {
+      method: "POST",
+      credentials: "include",
+      // No Content-Type: the browser must set the multipart boundary itself.
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      body: form,
+    });
+    if (!res.ok) {
+      let detail = res.statusText;
+      try { detail = (await res.json()).detail || detail; } catch {}
+      throw new Error(detail);
+    }
+    return res.json();
+  },
   // Runs a plan the user approved. The token is re-verified server-side.
   jocastaConfirm: (confirm_token: string) =>
     post<T.JocastaResult>("/jocasta/confirm", { confirm_token }),
@@ -85,12 +108,37 @@ export const api = {
   createCourse: (body: any) => post("/college/courses", body),
   updateCourse: (id: string, body: any) => patch(`/college/courses/${id}`, body),
   deleteCourse: (id: string) => del(`/college/courses/${id}`),
-  markAttendance: (id: string, attended: boolean) => post(`/college/courses/${id}/attendance`, { attended }),
+  // Attendance is counted: both outcomes record a class as held.
+  markAttendance: (id: string, attended: boolean) =>
+    post<T.Course>(`/college/courses/${id}/attendance`, { attended }),
+  undoAttendance: (id: string, attended: boolean) =>
+    post<T.Course>(`/college/courses/${id}/attendance/undo`, { attended }),
+  setAttendance: (id: string, attended_classes: number, total_classes: number) =>
+    patch<T.Course>(`/college/courses/${id}/attendance`, { attended_classes, total_classes }),
+
+  // Course workspace
+  course: (id: string) => request<T.CourseWorkspace>(`/college/courses/${id}`),
+  addModule: (id: string, name: string) =>
+    post<T.CourseWorkspace>(`/college/courses/${id}/modules`, { name }),
+  deleteModule: (moduleId: string) => del(`/college/modules/${moduleId}`),
+  // Namespaced: a course concept is a different thing from a learning topic.
+  addCourseTopic: (moduleId: string, name: string) =>
+    post<T.CourseWorkspace>(`/college/modules/${moduleId}/topics`, { name }),
+  toggleCourseTopic: (topicId: string) =>
+    post<T.CourseWorkspace>(`/college/topics/${topicId}/toggle`),
+  deleteCourseTopic: (topicId: string) => del(`/college/topics/${topicId}`),
+  createStructure: (id: string, modules: { name: string; topics: string[] }[], replace = false) =>
+    post<T.CourseWorkspace>(`/college/courses/${id}/structure`, { modules, replace }),
   createClass: (body: any) => post("/college/classes", body),
+  updateClass: (id: string, body: any) => patch(`/college/classes/${id}`, body),
   deleteClass: (id: string) => del(`/college/classes/${id}`),
+  // What a course delete would take with it — shown before asking.
+  courseImpact: (id: string) => request<T.CourseImpact>(`/college/courses/${id}/impact`),
   createExam: (body: any) => post("/college/exams", body),
+  updateExam: (id: string, body: any) => patch(`/college/exams/${id}`, body),
   deleteExam: (id: string) => del(`/college/exams/${id}`),
   createEvent: (body: any) => post("/college/events", body),
+  updateEvent: (id: string, body: any) => patch(`/college/events/${id}`, body),
   deleteEvent: (id: string) => del(`/college/events/${id}`),
   createSemester: (body: any) => post("/college/semesters", body),
   createAssignment: (body: any) => post("/assignments", body),

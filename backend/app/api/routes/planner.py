@@ -13,6 +13,7 @@ from app.core.database import get_db
 from app.api.deps import get_current_user
 from app.models import Task, Class, Course, Exam, AcademicEvent, Reminder
 from app.services import spider_sense
+from app.services import planner as planner_svc
 from app.services.timeutils import local_hhmm, local_now, local_today, start_of_local_day, now
 
 router = APIRouter(prefix="/planner", tags=["planner"])
@@ -43,38 +44,64 @@ def _day_payload(db, user, offset: int) -> dict:
     rows = (db.query(Class, Course).join(Course, Class.course_id == Course.id)
             .filter(Class.user_id == user.id, Class.day_of_week == dow).all())
     for cl, c in rows:
+        # A class carries its own identity: the course it belongs to, where it
+        # is and who teaches it. `movable`/`editable` stay false because a class
+        # is edited on its course, not dragged around the planner, and there is
+        # deliberately no completable flag — a class is attended or missed.
         items.append({"id": str(cl.id), "kind": "class", "time": cl.start_time,
                       "end": cl.end_time, "title": c.name, "meta": cl.room or c.room,
-                      "icon": "college", "status": "fixed", "movable": False})
+                      "icon": "college", "status": "fixed", "movable": False,
+                      "editable": False, "can_complete": False,
+                      "category": planner_svc.CLASS,
+                      "code": c.code or "", "room": cl.room or c.room or "",
+                      "faculty": c.faculty or "",
+                      "course_id": str(cl.course_id) if cl.course_id else None})
 
     tasks = (db.query(Task)
              .filter(Task.user_id == user.id, Task.due_at >= start, Task.due_at < end)
              .order_by(Task.due_at).all())
     for t in tasks:
         items.append({"id": str(t.id), "kind": "task", "time": _hhmm(t.due_at),
-                      "end": None, "title": t.title,
-                      "meta": t.meta or t.category, "icon": t.icon or CATEGORY_ICON.get(t.category, "tasks"),
-                      "status": t.status, "priority": t.priority, "category": t.category,
-                      "source": t.source, "est_minutes": t.est_minutes, "movable": True})
+                      "end": None, "title": t.title, "meta": t.meta or "",
+                      "icon": t.icon or CATEGORY_ICON.get(t.category, "tasks"),
+                      "status": t.status, "priority": t.priority,
+                      # Canonical for display; `stored_category` is what is on the row.
+                      "category": planner_svc.canonical(t.category, t.source),
+                      "stored_category": t.category,
+                      "source": t.source, "est_minutes": t.est_minutes,
+                      "due_at": t.due_at.isoformat() if t.due_at else None,
+                      "movable": True, "editable": True})
 
     for ex in (db.query(Exam)
                .filter(Exam.user_id == user.id, Exam.date >= start, Exam.date < end).all()):
+        # Editable but not movable: an exam is a fixed commitment you can
+        # correct (wrong date, wrong room) but not drag around like a task.
         items.append({"id": str(ex.id), "kind": "exam", "time": _hhmm(ex.date), "end": None,
                       "title": ex.title, "meta": ex.room or ex.type.upper(),
-                      "icon": "college", "status": "fixed", "movable": False})
+                      "icon": "college", "status": "fixed", "movable": False,
+                      "editable": True, "can_complete": False,
+                      "exam_type": ex.type, "room": ex.room or "",
+                      "date": ex.date.isoformat() if ex.date else None,
+                      "category": planner_svc.CLASS})
 
     for ev in (db.query(AcademicEvent)
                .filter(AcademicEvent.user_id == user.id,
                        AcademicEvent.date >= start, AcademicEvent.date < end).all()):
-        items.append({"id": str(ev.id), "kind": "event", "time": _hhmm(ev.date),
+        items.append({"category": planner_svc.PERSONAL,
+                      "id": str(ev.id), "kind": "event", "time": _hhmm(ev.date),
                       "end": _hhmm(ev.end_date) if ev.end_date else None,
                       "title": ev.title, "meta": ev.type.replace("_", " "),
-                      "icon": "cal", "status": "fixed", "movable": False})
+                      "icon": "cal", "status": "fixed", "movable": False,
+                      "editable": True, "can_complete": False,
+                      "event_type": ev.type,
+                      "date": ev.date.isoformat() if ev.date else None,
+                      "end_date": ev.end_date.isoformat() if ev.end_date else None})
 
     for r in (db.query(Reminder)
               .filter(Reminder.user_id == user.id,
                       Reminder.remind_at >= start, Reminder.remind_at < end).all()):
-        items.append({"id": str(r.id), "kind": "reminder", "time": _hhmm(r.remind_at), "end": None,
+        items.append({"category": planner_svc.PERSONAL,
+                      "id": str(r.id), "kind": "reminder", "time": _hhmm(r.remind_at), "end": None,
                       "title": r.title, "meta": r.meta or "Reminder", "icon": "bell",
                       "status": "delivered" if r.delivered else "pending", "movable": False})
 
@@ -105,9 +132,13 @@ def get_planner(days: int = 7, db: Session = Depends(get_db), user=Depends(get_c
         "today": _day_payload(db, user, 0),
         "days": [_day_payload(db, user, i) for i in range(days)],
         "conflicts": conflicts,
-        "unscheduled": [{"id": str(t.id), "title": t.title, "meta": t.meta or t.category,
-                         "icon": t.icon, "priority": t.priority, "est_minutes": t.est_minutes}
+        "unscheduled": [{"id": str(t.id), "title": t.title, "meta": t.meta or "",
+                         "icon": t.icon, "priority": t.priority,
+                         "est_minutes": t.est_minutes,
+                         "category": planner_svc.canonical(t.category, t.source),
+                         "source": t.source}
                         for t in unscheduled],
+        "categories": planner_svc.CATEGORIES,
     }
 
 

@@ -182,17 +182,29 @@ def _detect_exams(db, user) -> list[Signal]:
 
 
 def _detect_attendance(db, user) -> list[Signal]:
+    """Courses whose attendance has actually fallen below the floor.
+
+    A course with no classes held yet sits at 0% because nothing has happened,
+    not because anything is wrong. Warning about that would be noise the user
+    cannot act on, so it is skipped until there is real attendance data.
+    """
+    from app.services import courses as course_svc
     out = []
     for c in db.query(Course).filter(Course.user_id == user.id).all():
-        if (c.attendance or 0) < ATTENDANCE_FLOOR:
-            gap = ATTENDANCE_FLOOR - (c.attendance or 0)
-            out.append(Signal(
-                key=f"attendance:{c.id}", level="action", kind="attendance",
-                module="college", source="attendance", ref_type="course", ref_id=c.id,
-                title=f"{c.name} attendance is {c.attendance}%.",
-                explanation=f"That's {gap} points below the {ATTENDANCE_FLOOR}% floor — "
-                            "missing more classes puts the credit at risk.",
-                action_label="Review attendance", action_href="/college"))
+        held = c.total_classes or 0
+        if held <= 0:
+            continue
+        current = course_svc.pct(c.attended_classes, held)
+        if current >= ATTENDANCE_FLOOR:
+            continue
+        gap = ATTENDANCE_FLOOR - current
+        out.append(Signal(
+            key=f"attendance:{c.id}", level="action", kind="attendance",
+            module="college", source="attendance", ref_type="course", ref_id=c.id,
+            title=f"{c.name} attendance is {current}%.",
+            explanation=(f"{c.attended_classes or 0} of {held} classes attended — "
+                         f"{gap} points below the {ATTENDANCE_FLOOR}% floor."),
+            action_label="Review attendance", action_href="/college"))
     return out
 
 

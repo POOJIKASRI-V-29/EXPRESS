@@ -1,0 +1,33 @@
+# Production image. The dev Dockerfile alongside this one runs `next dev` and is
+# still what docker-compose builds locally; this one builds and serves.
+#
+# NEXT_PUBLIC_API_URL has to be present at BUILD time, not just at runtime:
+# Next.js inlines NEXT_PUBLIC_* into the client bundle during `next build`, so a
+# value supplied only to the running container would never reach the browser and
+# every request would fall back to localhost.
+FROM node:20-slim AS builder
+WORKDIR /app
+
+COPY package.json package-lock.json* ./
+RUN npm ci --no-audit --no-fund 2>/dev/null || npm install --no-audit --no-fund
+
+COPY . .
+
+ARG NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+RUN test -n "$NEXT_PUBLIC_API_URL" || \
+      (echo "NEXT_PUBLIC_API_URL build arg is required" && exit 1)
+RUN npm run build
+
+FROM node:20-slim AS runner
+WORKDIR /app
+ENV NODE_ENV=production
+
+COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/.next ./.next
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/next.config.js ./next.config.js
+
+ENV PORT=3000
+CMD ["sh", "-c", "npx next start -H 0.0.0.0 -p ${PORT:-3000}"]

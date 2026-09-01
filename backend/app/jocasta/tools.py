@@ -12,9 +12,15 @@ fuzzy name can never reach someone else's data.
 """
 from datetime import timedelta
 from app.models import (Task, Reminder, Memory, Note, Assignment, Class, Course, Notification,
+                        CourseModule, CourseTopic,
                         LearningTopic, LearningSession, Project, ProjectTask, Habit, HabitLog,
                         FinanceEntry, Budget, Goal, Internship, Application, Exam)
 from app.services import materialize, spider_sense, habits as habits_svc, finance as finance_svc
+from app.services import courses as course_svc
+
+#: Timetable days, 0 = Monday — the same convention as Class.day_of_week.
+DAY_NAMES = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday",
+             "Saturday", "Sunday"]
 from app.services import goals as goals_svc
 from app.services.timeutils import now, local_today
 from app.jocasta import schemas as sc
@@ -40,6 +46,16 @@ def _match(rows, query: str, *fields):
     for r in rows:
         if any(q in v or v in q for v in vals(r) if v):
             return r
+    # Initials. Students say "DBMS" for "Database Management Systems" and "ML"
+    # for "Machine Learning" — without this, the shorthand people actually use
+    # never resolves. Matched exactly, and only when it is unambiguous: two
+    # courses sharing initials resolve to neither rather than to a coin flip.
+    if q.isalpha() and 2 <= len(q) <= 6:
+        initials = [r for r in rows
+                    if any("".join(w[0] for w in v.split() if w) == q for v in vals(r))]
+        if len(initials) == 1:
+            return initials[0]
+
     qwords = {w for w in q.split() if len(w) > 2}
     best, best_score = None, 0
     for r in rows:
@@ -98,12 +114,72 @@ def complete_task(db, user, a: sc.TaskIdArgs):
 
 
 def complete_task_by_name(db, user, a: sc.CompleteByTitleArgs):
-    """Complete the task the user described, without needing its id."""
+    """Mark the thing the user named as done, without needing its id.
+
+    "I finished binary trees" might mean an open task or a course concept, and
+    the user should not have to say which. Resolution order is open tasks
+    first (they carry deadlines, so they are the more urgent reading), then
+    course concepts. The reply says which kind was matched, so an ambiguous
+    phrase never resolves silently to the wrong thing.
+    """
     rows = db.query(Task).filter(Task.user_id == user.id, Task.status == "open").all()
     t = _match(rows, a.query, "title", "meta", "category")
+    if t:
+        return {**_complete(db, user, t), "kind": "task"}
+
+    topic = _match(db.query(CourseTopic)
+                   .filter(CourseTopic.user_id == user.id,
+                           CourseTopic.done == False).all(),  # noqa: E712
+                   a.query, "name")
+    if topic:
+        course_svc.set_topic_done(db, topic, True)
+        db.commit()
+        module = db.query(CourseModule).filter(CourseModule.id == topic.module_id).first()
+        course = (db.query(Course).filter(Course.id == module.course_id).first()
+                  if module else None)
+        return {"kind": "concept", "title": topic.name, "status": "done",
+                "course": course.name if course else "",
+                "course_progress": (course_svc.progress(db, user, course.id)
+                                    if course else 0)}
+
+    raise ValueError(f"nothing open matching “{a.query}”")
+
+
+def reschedule_task_by_name(db, user, a: sc.RescheduleByNameArgs):
+    """Move the item the user named. Refuses when the name is ambiguous."""
+    rows = db.query(Task).filter(Task.user_id == user.id, Task.status == "open").all()
+    matches = [t for t in rows if a.query.strip().lower() in (t.title or "").lower()]
+    if len(matches) > 1:
+        raise ValueError(
+            "that matches " + str(len(matches)) + " items: "
+            + "; ".join(t.title for t in matches[:4]) + ". Which one?")
+    t = matches[0] if matches else _match(rows, a.query, "title", "meta", "category")
     if not t:
-        raise ValueError(f"no open task matching “{a.query}”")
-    return _complete(db, user, t)
+        raise ValueError(f"nothing on your planner matching “{a.query}”")
+    return reschedule_task(db, user, sc.RescheduleArgs(task_id=str(t.id), due_at=a.due_at))
+
+
+def delete_task(db, user, a: sc.DeleteTaskArgs):
+    """Remove a planner item.
+
+    Refuses on an ambiguous name rather than deleting the wrong thing — the
+    caller turns that refusal into a question. A task that mirrors an
+    assignment or project task deletes only the planner entry; the underlying
+    coursework is not silently destroyed.
+    """
+    rows = db.query(Task).filter(Task.user_id == user.id, Task.status == "open").all()
+    matches = [t for t in rows if a.query.strip().lower() in (t.title or "").lower()]
+    if len(matches) > 1:
+        raise ValueError(
+            "that matches " + str(len(matches)) + " items: "
+            + "; ".join(t.title for t in matches[:4]) + ". Which one?")
+    t = matches[0] if matches else _match(rows, a.query, "title", "meta", "category")
+    if not t:
+        raise ValueError(f"nothing on your planner matching “{a.query}”")
+    title, source = t.title, t.source
+    db.delete(t)
+    db.commit()
+    return {"title": title, "deleted": True, "source": source}
 
 
 def reschedule_task(db, user, a: sc.RescheduleArgs):
@@ -214,35 +290,213 @@ def create_assignment(db, user, a: sc.CreateAssignmentArgs):
             "course": course.name if course else None}
 
 
-def mark_attendance(db, user, a: sc.MarkAttendanceArgs):
-    course = _match(_user_rows(db, user, Course), a.course, "name", "code")
+def _find_course(db, user, name: str) -> Course:
+    course = _match(_user_rows(db, user, Course), name, "name", "code")
     if not course:
-        raise ValueError(f"no course matching “{a.course}”")
-    slots = db.query(Class).filter(Class.user_id == user.id, Class.course_id == course.id).count() or 1
-    step = max(1, round(100 / (slots * 15)))
-    course.attendance = max(0, min(100, (course.attendance or 0) + (step if a.attended else -step)))
+        raise ValueError(f"no course matching “{name}”")
+    return course
+
+
+def mark_attendance(db, user, a: sc.MarkAttendanceArgs):
+    """Record one held class. Both outcomes increment classes held."""
+    course = _find_course(db, user, a.course)
+    course_svc.mark(course, a.attended)
     db.commit()
     spider_sense.scan(db, user)
-    return {"course": course.name, "attendance": course.attendance, "attended": a.attended}
+    return {"course": course.name, "attendance": course.attendance,
+            "attended_classes": course.attended_classes,
+            "total_classes": course.total_classes, "attended": a.attended}
 
 
-def get_schedule(db, user, a: sc.EmptyArgs):
-    dow = local_today().weekday()
+def set_attendance(db, user, a: sc.SetAttendanceArgs):
+    course = _find_course(db, user, a.course)
+    course_svc.set_counts(course, a.attended_classes, a.total_classes)
+    db.commit()
+    spider_sense.scan(db, user)
+    return {"course": course.name, "attendance": course.attendance,
+            "attended_classes": course.attended_classes,
+            "total_classes": course.total_classes}
+
+
+def create_course(db, user, a: sc.CreateCourseArgs):
+    from app.models import Semester
+    sem = (db.query(Semester)
+           .filter(Semester.user_id == user.id, Semester.is_active == True).first())  # noqa: E712
+    c = Course(user_id=user.id, name=a.name, code=a.code, faculty=a.faculty,
+               credits=a.credits, semester_id=sem.id if sem else None)
+    course_svc.set_counts(c, a.attended_classes, a.total_classes)
+    db.add(c); db.commit(); db.refresh(c)
+    return {"id": str(c.id), "name": c.name, "attendance": c.attendance,
+            "total_classes": c.total_classes}
+
+
+def update_course(db, user, a: sc.UpdateCourseArgs):
+    """Edit a course the user named in words. Attendance is not editable here —
+    that goes through mark_attendance / set_attendance so the counts keep their
+    own rules."""
+    course = _find_course(db, user, a.course)
+    fields = a.model_dump(exclude_none=True, exclude={"course"})
+    if not fields:
+        raise ValueError("nothing to change")
+    for k, v in fields.items():
+        setattr(course, k, v)
+    db.commit(); db.refresh(course)
+    return {"id": str(course.id), "name": course.name, "changed": sorted(fields)}
+
+
+def delete_course(db, user, a: sc.CourseNameArgs):
+    """Remove a course and the structure that lives inside it.
+
+    Modules, concepts, timetable slots and exams go with it. Assignments do
+    not — their FK is SET NULL, so coursework the user still owes survives.
+    """
+    course = _find_course(db, user, a.course)
+    name = course.name
+    module_ids = [m.id for m in
+                  db.query(CourseModule).filter(CourseModule.course_id == course.id).all()]
+    slots = db.query(Class).filter(Class.course_id == course.id).count()
+    if module_ids:
+        (db.query(CourseTopic).filter(CourseTopic.module_id.in_(module_ids))
+           .delete(synchronize_session=False))
+        (db.query(CourseModule).filter(CourseModule.course_id == course.id)
+           .delete(synchronize_session=False))
+    db.query(Class).filter(Class.course_id == course.id).delete(synchronize_session=False)
+    db.query(Exam).filter(Exam.course_id == course.id).delete(synchronize_session=False)
+    (db.query(Assignment).filter(Assignment.course_id == course.id)
+       .update({Assignment.course_id: None}, synchronize_session=False))
+    db.delete(course); db.commit()
+    return {"deleted": name, "modules": len(module_ids), "classes": slots}
+
+
+def schedule_class(db, user, a: sc.ScheduleClassArgs):
+    """Put a recurring weekly slot on the timetable for a course."""
+    course = _find_course(db, user, a.course)
+    cl = Class(user_id=user.id, course_id=course.id, day_of_week=a.day_of_week,
+               start_time=a.start_time, end_time=a.end_time,
+               room=a.room or course.room)
+    db.add(cl); db.commit(); db.refresh(cl)
+    return {"id": str(cl.id), "course": course.name, "day": DAY_NAMES[cl.day_of_week],
+            "start_time": cl.start_time, "end_time": cl.end_time}
+
+
+def reschedule_class(db, user, a: sc.RescheduleClassArgs):
+    """Move a course's weekly slot. Refuses when the course has several, rather
+    than picking one — "move my DBMS class" is ambiguous with two of them."""
+    course = _find_course(db, user, a.course)
+    slots = db.query(Class).filter(Class.user_id == user.id,
+                                   Class.course_id == course.id).all()
+    if not slots:
+        raise ValueError(f"{course.name} has no class on the timetable yet")
+    if len(slots) > 1:
+        days = ", ".join(f"{DAY_NAMES[s.day_of_week]} {s.start_time}" for s in slots)
+        raise ValueError(f"{course.name} has {len(slots)} slots ({days}) — say which one")
+    cl = slots[0]
+    fields = a.model_dump(exclude_none=True, exclude={"course"})
+    if not fields:
+        raise ValueError("nothing to change")
+    for k, v in fields.items():
+        setattr(cl, k, v)
+    db.commit(); db.refresh(cl)
+    return {"id": str(cl.id), "course": course.name, "day": DAY_NAMES[cl.day_of_week],
+            "start_time": cl.start_time, "end_time": cl.end_time}
+
+
+def delete_class(db, user, a: sc.CourseNameArgs):
+    """Remove a course's weekly slot from the timetable."""
+    course = _find_course(db, user, a.course)
+    slots = db.query(Class).filter(Class.user_id == user.id,
+                                   Class.course_id == course.id).all()
+    if not slots:
+        raise ValueError(f"{course.name} has no class on the timetable")
+    if len(slots) > 1:
+        days = ", ".join(f"{DAY_NAMES[s.day_of_week]} {s.start_time}" for s in slots)
+        raise ValueError(f"{course.name} has {len(slots)} slots ({days}) — say which one")
+    cl = slots[0]
+    where = f"{DAY_NAMES[cl.day_of_week]} {cl.start_time}"
+    db.delete(cl); db.commit()
+    return {"deleted": f"{course.name} class", "was": where}
+
+
+def set_course_drive(db, user, a: sc.SetDriveArgs):
+    """Store a Drive link. EXPRESS does not sync Drive — it opens what is saved."""
+    course = _find_course(db, user, a.course)
+    course.drive_url = a.url
+    db.commit()
+    return {"course": course.name, "drive_url": course.drive_url}
+
+
+def get_course(db, user, a: sc.CourseNameArgs):
+    course = _find_course(db, user, a.course)
+    return course_svc.workspace(db, user, course)
+
+
+def complete_topic(db, user, a: sc.CompleteTopicArgs):
+    """Tick a course concept named in words.
+
+    Scoped to one course when the user says which, so "normalization" cannot
+    match a same-named concept in an unrelated course by accident.
+    """
+    q = db.query(CourseTopic).filter(CourseTopic.user_id == user.id)
+    if a.course:
+        course = _find_course(db, user, a.course)
+        q = (q.join(CourseModule, CourseTopic.module_id == CourseModule.id)
+              .filter(CourseModule.course_id == course.id))
+    topic = _match(q.all(), a.topic, "name")
+    if not topic:
+        where = f" in {a.course}" if a.course else ""
+        raise ValueError(f"no concept matching “{a.topic}”{where}")
+    course_svc.set_topic_done(db, topic, a.done)
+    db.commit()
+    module = db.query(CourseModule).filter(CourseModule.id == topic.module_id).first()
+    course = db.query(Course).filter(Course.id == module.course_id).first() if module else None
+    return {"topic": topic.name, "done": topic.done,
+            "course": course.name if course else "",
+            "course_progress": course_svc.progress(db, user, course.id) if course else 0}
+
+
+_WEEKDAYS = {"monday": 0, "tuesday": 1, "wednesday": 2, "thursday": 3,
+             "friday": 4, "saturday": 5, "sunday": 6}
+
+
+def get_schedule(db, user, a: sc.ScheduleArgs):
+    """Classes on a given weekday. Reads the real timetable."""
+    from datetime import timedelta
+    want = (a.day or "").strip().lower()
+    today = local_today()
+    if want in ("", "today"):
+        target, label = today.weekday(), "today"
+    elif want == "tomorrow":
+        d = today + timedelta(days=1)
+        target, label = d.weekday(), "tomorrow"
+    elif want in _WEEKDAYS:
+        target, label = _WEEKDAYS[want], want
+    else:
+        target, label = today.weekday(), "today"
+
     rows = (db.query(Class, Course)
             .join(Course, Class.course_id == Course.id)
-            .filter(Class.user_id == user.id, Class.day_of_week == dow)
+            .filter(Class.user_id == user.id, Class.day_of_week == target)
             .order_by(Class.start_time).all())
-    return [{"course": c.name, "start": cl.start_time, "end": cl.end_time, "room": cl.room}
-            for cl, c in rows]
+    return {"day": label,
+            "classes": [{"course": c.name, "code": c.code, "start": cl.start_time,
+                         "end": cl.end_time, "room": cl.room} for cl, c in rows]}
 
 
 def get_college(db, user, a: sc.EmptyArgs):
     courses = _user_rows(db, user, Course)
     exams = (db.query(Exam).filter(Exam.user_id == user.id).order_by(Exam.date).all())
+    # Only courses that have held a class have an attendance record. Including
+    # a brand-new course as 0% both drags the average down and reports it as
+    # "below the floor", which is a fact about nothing.
+    counted = [c for c in courses if (c.total_classes or 0) > 0]
     return {
-        "attendance": round(sum(c.attendance for c in courses) / len(courses)) if courses else 0,
-        "courses": [{"name": c.name, "attendance": c.attendance} for c in courses],
-        "at_risk": [c.name for c in courses if (c.attendance or 0) < spider_sense.ATTENDANCE_FLOOR],
+        "attendance": (round(sum(c.attendance for c in counted) / len(counted))
+                       if counted else 0),
+        "courses": [{"name": c.name,
+                     "attendance": c.attendance if (c.total_classes or 0) > 0 else None,
+                     "classes_held": c.total_classes or 0} for c in courses],
+        "at_risk": [c.name for c in counted
+                    if (c.attendance or 0) < spider_sense.ATTENDANCE_FLOOR],
         "next_exam": None if not exams else {"title": exams[0].title, "date": exams[0].date.isoformat()},
     }
 
@@ -461,6 +715,8 @@ REGISTRY = {
     "complete_task": (sc.TaskIdArgs, complete_task),
     "complete_task_by_name": (sc.CompleteByTitleArgs, complete_task_by_name),
     "reschedule_task": (sc.RescheduleArgs, reschedule_task),
+    "delete_task": (sc.DeleteTaskArgs, delete_task),
+    "reschedule_task_by_name": (sc.RescheduleByNameArgs, reschedule_task_by_name),
     "find_task": (sc.FindTaskArgs, find_task),
     "create_reminder": (sc.CreateReminderArgs, create_reminder),
     # memory & notes
@@ -474,7 +730,17 @@ REGISTRY = {
     # college
     "create_assignment": (sc.CreateAssignmentArgs, create_assignment),
     "mark_attendance": (sc.MarkAttendanceArgs, mark_attendance),
-    "get_schedule": (sc.EmptyArgs, get_schedule),
+    "set_attendance": (sc.SetAttendanceArgs, set_attendance),
+    "create_course": (sc.CreateCourseArgs, create_course),
+    "update_course": (sc.UpdateCourseArgs, update_course),
+    "delete_course": (sc.CourseNameArgs, delete_course),
+    "schedule_class": (sc.ScheduleClassArgs, schedule_class),
+    "reschedule_class": (sc.RescheduleClassArgs, reschedule_class),
+    "delete_class": (sc.CourseNameArgs, delete_class),
+    "get_course": (sc.CourseNameArgs, get_course),
+    "set_course_drive": (sc.SetDriveArgs, set_course_drive),
+    "complete_topic": (sc.CompleteTopicArgs, complete_topic),
+    "get_schedule": (sc.ScheduleArgs, get_schedule),
     "get_college": (sc.EmptyArgs, get_college),
     # learning
     "log_study": (sc.LogStudyArgs, log_study),

@@ -37,6 +37,16 @@ export interface JocastaResult {
   /** Which context slices informed the answer — shown so replies are explainable. */
   context_used?: string[];
 }
+export interface AttachmentInfo {
+  filename: string;
+  kind: string;
+  pages: number;
+  chars: number;
+  preview: string;
+  /** What the server recognised in the file — used to hint at what's possible. */
+  found: { classes: number; modules: number; concepts: number };
+  attachment_token: string;
+}
 export interface JocastaContext {
   included_slices: string[];
   brief: string;
@@ -46,7 +56,40 @@ export interface JocastaContext {
 /* ---- College ---- */
 export interface Course {
   id: string; code: string; name: string; faculty: string; room: string;
-  attendance: number; at_risk: boolean; assignments_open: number;
+  /** Derived from attended/total; 0 also means "no classes held yet". */
+  attendance: number;
+  attended_classes: number;
+  total_classes: number;
+  /** False when no classes have been held — render "—", not 0%. */
+  has_attendance_data: boolean;
+  /** 0 means "not recorded" — simply not shown, never rendered as zero credits. */
+  credits: number;
+  drive_url: string;
+  modules: number;
+  topics_done: number;
+  topics_total: number;
+  progress: number;
+  next_module: string;
+  at_risk: boolean;
+  assignments_open: number;
+}
+export interface CourseImpact {
+  course: string; modules: number; concepts: number; classes: number;
+  assignments_kept: number; exams: number;
+}
+export interface CourseTopic { id: string; name: string; done: boolean; }
+export interface CourseModule {
+  id: string; name: string; order: number;
+  topics: CourseTopic[]; done: number; total: number;
+}
+export interface CourseClass {
+  id: string; day_of_week: number; day_label: string;
+  start_time: string; end_time: string; room: string;
+}
+export interface CourseWorkspace extends Omit<Course, "at_risk" | "assignments_open"> {
+  module_list: CourseModule[];
+  /** This course's recurring weekly slots — what Planner renders as classes. */
+  classes: CourseClass[];
 }
 export interface TimetableSlot {
   id: string; day: number; day_label: string; start: string; end: string;
@@ -67,10 +110,21 @@ export interface CollegePayload {
 }
 
 /* ---- Planner ---- */
+/** Task · Study · Project · Personal · Class (Class comes from the timetable). */
+export type PlannerCategory = "Task" | "Study" | "Project" | "Personal" | "Class";
 export interface PlannerItem {
   id: string; kind: string; time: string; end: string | null; title: string;
   meta: string; icon: string; status: string; movable: boolean;
-  priority?: string; category?: string; source?: string; est_minutes?: number;
+  category: PlannerCategory;
+  /** Tasks, exams and events can be corrected here. Classes cannot: they
+   *  belong to the timetable and are managed on their course. */
+  editable?: boolean;
+  can_complete?: boolean;
+  priority?: string; source?: string; est_minutes?: number;
+  due_at?: string | null; stored_category?: string; course_id?: string | null;
+  /** Exams and events carry their own date so the edit dialog can prefill it. */
+  date?: string | null; end_date?: string | null;
+  exam_type?: string; event_type?: string; room?: string;
 }
 export interface PlannerDay {
   offset: number; date: string; day_label: string; is_today: boolean;
@@ -79,7 +133,11 @@ export interface PlannerDay {
 export interface PlannerPayload {
   now: string; today: PlannerDay; days: PlannerDay[];
   conflicts: { key: string; title: string }[];
-  unscheduled: { id: string; title: string; meta: string; icon: string; priority: string; est_minutes: number }[];
+  unscheduled: {
+    id: string; title: string; meta: string; icon: string; priority: string;
+    est_minutes: number; category: PlannerCategory; source: string;
+  }[];
+  categories: PlannerCategory[];
 }
 
 /* ---- Learning ---- */

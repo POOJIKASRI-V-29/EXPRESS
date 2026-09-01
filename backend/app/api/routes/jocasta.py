@@ -4,12 +4,17 @@
 approved. `/context` exposes the exact brief JOCasta reasoned over, so an answer
 is always explainable.
 """
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from sqlalchemy.orm import Session
 
 from app.api.deps import get_current_user
 from app.core.database import get_db
-from app.jocasta import context as ctx_mod, orchestrator, safety
+from app.jocasta import attachment as attachment_flow, context as ctx_mod, orchestrator, safety
+from app.services import attachments
+
+#: How much extracted text rides in the signed handle. Comfortably covers a
+#: timetable or a syllabus without making the request body unwieldy.
+TOKEN_TEXT_LIMIT = 20_000
 from app.schemas.jocasta import ConfirmIn, JocastaIn, JocastaOut
 
 router = APIRouter(prefix="/jocasta", tags=["jocasta"])
@@ -17,7 +22,45 @@ router = APIRouter(prefix="/jocasta", tags=["jocasta"])
 
 @router.post("/message", response_model=JocastaOut)
 def message(body: JocastaIn, db: Session = Depends(get_db), user=Depends(get_current_user)):
-    return orchestrator.run(db, user, body.text)
+    return orchestrator.run(db, user, body.text, attachment_token=body.attachment_token)
+
+
+@router.post("/attachments")
+async def upload_attachment(file: UploadFile = File(...), user=Depends(get_current_user)):
+    """Read an attachment and hand back a short-lived handle for it.
+
+    Reading only — this endpoint decides nothing. What the file is *for* is
+    worked out when the user sends their instruction, because the same PDF can
+    mean "add these classes", "build this course" or "what does this say".
+
+    The file itself is never stored: the extracted text travels back in a
+    signed, user-bound token that expires in 30 minutes.
+    """
+    data = await file.read()
+    try:
+        att = attachments.read(data, file.filename or "attachment",
+                               file.content_type or "")
+    except attachments.UnreadableAttachment as exc:
+        # A reason the user can act on, not a generic failure.
+        raise HTTPException(422, str(exc))
+
+    signals, _classes, _outline = attachment_flow.analyse(att)
+
+    return {
+        "filename": att.filename,
+        "kind": att.kind,
+        "pages": att.pages,
+        "chars": att.chars,
+        "preview": att.preview(240),
+        # What was recognised, so the UI can hint at what is possible.
+        "found": {"classes": signals.classes, "modules": signals.modules,
+                  "concepts": signals.concepts},
+        "attachment_token": safety.sign_payload(
+            user.id,
+            {"kind": "attachment", "filename": att.filename, "type": att.kind,
+             "pages": att.pages, "text": att.text[:TOKEN_TEXT_LIMIT],
+             "truncated": att.chars > TOKEN_TEXT_LIMIT}),
+    }
 
 
 @router.post("/confirm", response_model=JocastaOut)

@@ -4,6 +4,9 @@ from pydantic import BaseModel
 
 class JocastaIn(BaseModel):
     text: str
+    # Signed, short-lived handle for a PDF the user just attached. The file
+    # itself is never stored — the token carries the parsed rows.
+    attachment_token: Optional[str] = None
 
 
 class ConfirmIn(BaseModel):
@@ -48,3 +51,7 @@ class JocastaOut(BaseModel):
     pending: Optional[PendingOut] = None
     confirm_token: Optional[str] = None
     context_used: list[str] = []      # which context slices informed the answer
+    # What JOCasta decided the message was, and why. Exposed so a surprising
+    # answer can be traced to the classification that produced it.
+    intent: str = ""
+    intent_reason: str = ""

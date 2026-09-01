@@ -34,9 +34,24 @@ class Settings(BaseSettings):
     # Local timezone for time-of-day context on Home (storage stays UTC)
     LOCAL_TZ: str = "UTC"
 
-    # JOCasta LLM (optional). If unset, JOCasta falls back to the rule planner.
+    # JOCasta LLM (optional). If unset, JOCasta falls back to the rule planner
+    # and the deterministic conversation templates — it degrades, never breaks.
+    #
+    # Google Gemini is the active provider. GEMINI_MODEL is deliberately a
+    # setting rather than a constant: model ids age out, and a shut-down id
+    # should be fixable from the environment rather than by a code change.
+    GEMINI_API_KEY: str | None = None
+    # Verified reachable on the Developer API free tier. 3.7-flash returns 503
+    # "high demand" there and gemini-flash-latest hits the shared quota, so the
+    # default is the newest Flash that actually answers for this account.
+    GEMINI_MODEL: str = "gemini-3.5-flash"
+
+    # Anthropic settings are kept so an existing .env still loads and so the
+    # provider can be switched back without a code change. Nothing reads
+    # ANTHROPIC_API_KEY while GEMINI_API_KEY is set; see app/jocasta/llm.py.
     ANTHROPIC_API_KEY: str | None = None
     JOCASTA_MODEL: str = "claude-opus-5"
+
     JOCASTA_MAX_TOKENS: int = 8000
     JOCASTA_EFFORT: str = "low"         # low | medium | high | xhigh | max
     JOCASTA_TIMEOUT_SECONDS: float = 30.0

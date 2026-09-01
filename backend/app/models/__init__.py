@@ -2,6 +2,7 @@ from app.models.base import Base, TimestampMixin, new_id  # noqa
 from app.models.user import User  # noqa
 from app.models.academics import (  # noqa
     Semester, Course, Class, AcademicEvent, Assignment, Exam,
+    CourseModule, CourseTopic,
 )
 from app.models.tasks import Task, Subtask, Reminder, Habit, HabitLog, Goal, GoalLink  # noqa
 from app.models.projects import Project, ProjectPhase, ProjectTask  # noqa
