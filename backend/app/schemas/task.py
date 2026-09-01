@@ -30,10 +30,20 @@ class TaskCreate(BaseModel):
 
 
 class TaskUpdate(BaseModel):
+    """Every field the Planner lets you edit.
+
+    `due_at` is included so a typo in the time can be fixed without deleting
+    and recreating the item — and separately from `reschedule`, which counts
+    as a postpone.
+    """
     title: Optional[str] = None
     priority: Optional[str] = None
     status: Optional[str] = None
     category: Optional[str] = None
+    due_at: Optional[datetime] = None
+    est_minutes: Optional[int] = None
+    meta: Optional[str] = None
+    icon: Optional[str] = None
 
 
 class RescheduleIn(BaseModel):

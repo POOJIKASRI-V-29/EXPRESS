@@ -292,6 +292,9 @@ a{color:inherit;text-decoration:none}
      into a real target rather than restyling it. */
   .link{display:inline-flex;align-items:center;min-height:36px;padding:2px 0}
   .tt .slot .link{min-height:32px}
+  /* Tabs and chips are comfortable at 29px with a mouse and marginal with a
+     thumb; on touch they get the same 36px floor as everything else. */
+  .tab,.chip{min-height:36px;display:inline-flex;align-items:center}
 
   /* Card headers carry a title plus a hint; let the hint drop to its own line
      instead of being truncated. */
@@ -529,3 +532,196 @@ a{color:inherit;text-decoration:none}
 button.stat{width:100%;font:inherit;cursor:pointer;
   transition:border-color var(--t-quick) linear,background var(--t-quick) linear}
 button.stat:hover{border-color:var(--line-2);background:var(--card-a)}
+
+/* A clickable thread row is a real <button>; it just shouldn't look like one. */
+button.thread-row{width:100%;text-align:left;font:inherit;color:inherit;background:none;
+  border:none;cursor:pointer;border-radius:8px;
+  transition:background var(--t-quick) linear}
+button.thread-row:hover{background:rgba(255,255,255,.025)}
+
+/* ── Profile menu ────────────────────────────────────────────────────────
+   Where the secondary modules live now: still one tap away, no longer
+   competing with the seven that matter daily. */
+.menu{position:absolute;right:0;top:44px;z-index:40;min-width:216px;
+  background:var(--bg-elev);border:1px solid var(--line-2);border-radius:var(--r2);
+  padding:6px;box-shadow:0 18px 40px -18px rgba(0,0,0,.8)}
+.menu-head{padding:10px 10px 12px;border-bottom:1px solid var(--line);margin-bottom:6px}
+.menu-name{font-size:13.5px;font-weight:700}
+.menu-mail{font-size:11.5px;color:var(--text-3);margin-top:2px;word-break:break-all}
+.menu-item{display:flex;align-items:center;gap:11px;width:100%;text-align:left;
+  padding:10px 10px;border-radius:8px;font-size:13px;color:var(--text-2);
+  transition:background var(--t-quick) linear,color var(--t-quick) linear}
+.menu-item:hover{background:var(--card-2);color:var(--text)}
+.menu-item.danger:hover{color:var(--red)}
+.menu-sep{height:1px;background:var(--line);margin:6px 4px}
+.drawer-more{border-top:1px solid var(--line);padding-top:14px;margin-top:8px}
+
+/* ── Course cards ────────────────────────────────────────────────────────
+   One card per course, showing the two numbers that matter — attendance and
+   concept coverage — both counted, both able to say "no data yet". */
+button.card.course-card{display:block;width:100%;text-align:left;font:inherit;color:inherit;
+  cursor:pointer;transition:border-color var(--t-quick) linear,transform var(--t-quick) var(--ease)}
+button.card.course-card:hover{border-color:rgba(124,156,242,.4)}
+button.card.course-card:active{transform:scale(.995)}
+.course-name{font-size:19px;font-weight:800;letter-spacing:-.4px;line-height:1.2}
+.course-figures{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:16px}
+.course-figures .k{font-size:10px;letter-spacing:1.5px;font-weight:700;text-transform:uppercase;color:var(--text-3)}
+.course-figures .v{font-size:24px;font-weight:800;letter-spacing:-.8px;margin-top:5px;line-height:1}
+.course-figures .v.risk{color:var(--critical)}
+.course-figures .n{font-size:11.5px;color:var(--text-3);margin-top:4px}
+
+/* ── Course workspace ────────────────────────────────────────────────────
+   Attendance leads with the percentage but always shows the counts beneath
+   it, so the figure can be checked rather than merely believed. */
+.att{display:flex;align-items:center;gap:24px;flex-wrap:wrap}
+.att-figure{flex:none}
+.att-pct{font-size:44px;font-weight:800;letter-spacing:-1.6px;line-height:1}
+.att-pct.risk{color:var(--critical)}
+.att-counts{font-size:12.5px;color:var(--text-3);margin-top:6px}
+.att-controls{display:flex;gap:10px;flex-wrap:wrap;margin-left:auto}
+.att-undo{display:flex;align-items:center;gap:14px;margin-top:12px;flex-wrap:wrap}
+
+.mod{padding:14px 0;border-bottom:1px solid var(--line)}
+.mod:last-child{border-bottom:none}
+.mod-h{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+.mod-name{font-size:14.5px;font-weight:700;flex:1;min-width:0}
+.mod-count{flex:none}
+
+.topics{list-style:none;margin:10px 0 0;padding:0;display:flex;flex-direction:column;gap:2px}
+.topics li{display:flex;align-items:center;gap:8px}
+.topic{flex:1;display:flex;align-items:center;gap:11px;padding:9px 8px;border-radius:8px;
+  text-align:left;font:inherit;color:var(--text-2);min-height:40px;
+  transition:background var(--t-quick) linear,color var(--t-quick) linear}
+.topic:hover{background:rgba(255,255,255,.03);color:var(--text)}
+.topic .tick{width:19px;height:19px;flex:none;border-radius:5px;border:1.5px solid var(--line-2);
+  display:grid;place-items:center;color:var(--bg);
+  transition:background var(--t-quick) linear,border-color var(--t-quick) linear}
+.topic.done .tick{background:var(--calm);border-color:var(--calm)}
+.topic.done .topic-name{text-decoration:line-through;opacity:.55}
+.topic-name{font-size:13.5px;line-height:1.35}
+
+@media (max-width:720px){
+  .att{gap:16px}
+  .att-controls{margin-left:0;width:100%}
+  .att-controls .btn{flex:1 1 auto;justify-content:center}
+  .att-pct{font-size:38px}
+}
+
+/* ── Voice orb ───────────────────────────────────────────────────────────
+   Not a microphone button: the same nodes-and-threads geometry as the Sense
+   Core, reacting to state. Every state also carries a word beneath it. */
+.voice{display:grid;place-items:center;gap:14px;padding:8px 0}
+.voice-stage{position:relative;width:150px;height:150px;display:grid;place-items:center}
+.orb{position:relative;width:150px;height:150px;border-radius:50%;display:grid;place-items:center;
+  background:radial-gradient(circle at 50% 45%,rgba(62,111,227,.16),rgba(20,24,34,.5) 62%);
+  border:1px solid var(--line-2);cursor:pointer;
+  transition:border-color var(--t-quick) linear,transform var(--t-quick) var(--ease)}
+.orb:hover:not(:disabled){border-color:rgba(124,156,242,.5)}
+.orb:active:not(:disabled){transform:scale(.97)}
+.orb:disabled{opacity:.45;cursor:not-allowed}
+.orb-svg{position:absolute;inset:0;width:100%;height:100%;overflow:visible}
+.orb-web line,.orb-web circle{stroke:var(--thread-dim);fill:none;stroke-width:.7}
+.orb-core{fill:var(--steady);opacity:.16;transition:opacity var(--t-quick) linear}
+.orb-ring{fill:none;stroke:var(--steady);stroke-width:1;transform-origin:center;opacity:0}
+.orb-glyph{position:relative;z-index:1;color:var(--text-2);display:grid;place-items:center;
+  transition:color var(--t-quick) linear}
+
+/* Idle breathes slowly; listening quickens; thinking is steady; speaking is
+   warmer; error stops moving entirely and turns red. */
+.voice[data-state="idle"]      .orb-ring:nth-of-type(1){animation:halo 5s var(--ease-out) infinite}
+.voice[data-state="listening"] .orb-ring{animation:halo 1.5s var(--ease-out) infinite;stroke:var(--steady)}
+.voice[data-state="thinking"]  .orb-ring{animation:halo 2.6s var(--ease-out) infinite;stroke:var(--blue-soft)}
+.voice[data-state="speaking"]  .orb-ring{animation:halo 2s var(--ease-out) infinite;stroke:var(--calm)}
+.voice .orb-ring:nth-of-type(2){animation-delay:.5s}
+.voice .orb-ring:nth-of-type(3){animation-delay:1s}
+
+.voice[data-state="listening"] .orb{border-color:rgba(124,156,242,.6)}
+.voice[data-state="listening"] .orb-core{opacity:.5}
+.voice[data-state="listening"] .orb-glyph{color:var(--steady)}
+.voice[data-state="speaking"]  .orb-core{fill:var(--calm);opacity:.4}
+.voice[data-state="speaking"]  .orb-glyph{color:var(--calm)}
+.voice[data-state="error"]     .orb{border-color:var(--red-line)}
+.voice[data-state="error"]     .orb-core{fill:var(--critical);opacity:.35}
+.voice[data-state="error"]     .orb-glyph{color:var(--critical)}
+
+.voice-label{font-size:12px;letter-spacing:1.6px;font-weight:700;text-transform:uppercase;
+  color:var(--text-2);text-align:center}
+.voice[data-state="error"] .voice-label{color:var(--critical)}
+.voice-transcript{font-size:15px;color:var(--text);text-align:center;max-width:44ch;
+  line-height:1.5;font-style:italic}
+.voice-note{font-size:12.5px;color:var(--text-3);text-align:center;max-width:52ch;line-height:1.55}
+.voice-actions{display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:center}
+
+@media (max-width:720px){
+  .voice-stage,.orb{width:128px;height:128px}
+  .voice-transcript{font-size:14px}
+}
+
+/* ── Planner categories ──────────────────────────────────────────────────
+   Category is *what a thing is*; severity is *how urgent it is*. They must
+   never be confused, so these six hues are deliberately muted and drawn from
+   outside the Spider-Sense status range — no red, no amber, no green. Each is
+   paired with its name in text, so the colour is reinforcement, never the
+   only carrier of meaning. */
+:root{
+  --cat-task:#8C93A3;      /* neutral slate — the default kind */
+  --cat-study:#9B8CD8;     /* muted violet */
+  --cat-project:#57A8A0;   /* muted teal */
+  --cat-goal:#BE7E9E;      /* muted rose */
+  --cat-personal:#C09070;  /* warm taupe */
+  --cat-class:#6F86D6;     /* institutional indigo — fixed, not yours to move */
+}
+.cat{--c:var(--cat-task)}
+.cat[data-cat="Study"]{--c:var(--cat-study)}
+.cat[data-cat="Project"]{--c:var(--cat-project)}
+.cat[data-cat="Goal"]{--c:var(--cat-goal)}
+.cat[data-cat="Personal"]{--c:var(--cat-personal)}
+.cat[data-cat="Class"]{--c:var(--cat-class)}
+
+.cat-chip{display:inline-flex;align-items:center;gap:6px;font-size:9.5px;letter-spacing:1.1px;
+  font-weight:700;text-transform:uppercase;color:var(--c);padding:3px 8px;border-radius:5px;
+  border:1px solid color-mix(in srgb,var(--c) 40%,transparent);
+  background:color-mix(in srgb,var(--c) 10%,transparent)}
+.cat-dot{width:7px;height:7px;border-radius:50%;background:var(--c);flex:none}
+
+/* The day timeline. Calm: a thin rail, a coloured node per category, and the
+   time in the margin. Not a card per item. */
+.day{display:flex;flex-direction:column}
+.day-row{display:flex;gap:13px;align-items:flex-start;padding:12px 0;border-bottom:1px solid var(--line)}
+.day-row:last-child{border-bottom:none}
+.day-when{width:48px;flex:none;font-size:12px;font-weight:700;color:var(--text-3);
+  font-variant-numeric:tabular-nums;padding-top:2px}
+.day-rail{position:relative;width:14px;flex:none;display:flex;justify-content:center;align-self:stretch}
+.day-rail::before{content:"";position:absolute;top:16px;bottom:-12px;width:1px;background:var(--thread-dim)}
+.day-row:last-child .day-rail::before{display:none}
+.day-node{width:9px;height:9px;border-radius:50%;background:var(--c);margin-top:5px;flex:none;
+  box-shadow:0 0 0 3px color-mix(in srgb,var(--c) 18%,transparent)}
+.day-body{flex:1;min-width:0}
+.day-title{font-size:14px;font-weight:600;line-height:1.35}
+.day-sub{font-size:12px;color:var(--text-3);margin-top:3px;display:flex;align-items:center;
+  gap:8px;flex-wrap:wrap}
+.day-row.done .day-body{opacity:.45}
+.day-row.done .day-title{text-decoration:line-through}
+.day-acts{display:flex;gap:6px;align-items:center;flex:none}
+
+.unscheduled{opacity:.82}
+.unscheduled .card{background:var(--card-b)}
+
+@media (max-width:720px){
+  .day-row{flex-wrap:wrap;row-gap:9px}
+  .day-when{width:44px}
+  .day-acts{flex:1 1 100%;justify-content:flex-start}
+  .day-acts .btn{flex:1 1 auto;justify-content:center}
+}
+
+/* ── Attachment strip ────────────────────────────────────────────────────
+   Sits above the composer so it is obvious the next message applies to this
+   file. Reports what was recognised, so the user knows what JOCasta can do
+   with it before asking. */
+.attached{display:flex;align-items:center;gap:12px;margin-top:12px;padding:12px 14px;
+  border:1px solid var(--line-2);border-radius:var(--r2);background:var(--card-2);
+  color:var(--text-2);font-size:13px}
+.attached.bad{border-color:var(--red-line);background:var(--red-dim);color:var(--red)}
+.attached-name{font-size:13.5px;font-weight:600;color:var(--text);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.capture .iconbtn{flex:none}

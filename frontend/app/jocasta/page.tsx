@@ -1,14 +1,16 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Shell } from "@/components/shell";
 import { Atmosphere } from "@/components/atmosphere";
 import { Icon } from "@/components/icons";
 import { JocastaThinking } from "@/components/sense";
+import { VoiceOrb } from "@/components/voice";
+import { useVoice } from "@/lib/voice";
 import { useRequireAuth } from "@/lib/auth";
 import { api } from "@/lib/api";
 import { titleCase } from "@/lib/format";
-import type { JocastaResult } from "@/lib/types";
+import type { AttachmentInfo, JocastaResult } from "@/lib/types";
 
 interface Msg { role: "me" | "joc"; text: string; result?: JocastaResult; }
 
@@ -44,6 +46,13 @@ export default function JocastaPage() {
   const [stage, setStage] = useState(0);
   /** Tokens already approved or dismissed, so a prompt can't be answered twice. */
   const [settled, setSettled] = useState<Record<string, "approved" | "cancelled">>({});
+  const [mode, setMode] = useState<"text" | "voice">("text");
+  /** The file the next message applies to. Cleared once it has been sent. */
+  const [attached, setAttached] = useState<AttachmentInfo | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [attachError, setAttachError] = useState("");
+  const fileRef = useRef<HTMLInputElement>(null);
+  const voice = useVoice({ onTranscript: (said) => send(said) });
 
   useEffect(() => {
     if (!busy) { setStage(0); return; }
@@ -51,17 +60,49 @@ export default function JocastaPage() {
     return () => clearInterval(t);
   }, [busy]);
 
-  async function send(override?: string) {
+  /**
+   * The single entry point for a message, whatever produced it.
+   *
+   * Voice deliberately has no command system of its own: a transcript is just
+   * text, so it goes through this exact call and therefore through the same
+   * tools, the same validation and the same confirmation gate. Returns the
+   * reply so voice can speak it.
+   */
+  async function send(override?: string): Promise<string> {
     const t = (override ?? text).trim();
-    if (!t || busy) return;
+    if (!t || busy) return "";
     setMsgs((m) => [...m, { role: "me", text: t }]);
     setText(""); setBusy(true);
     try {
-      const res = await api.jocasta(t);
+      const res = await api.jocasta(t, attached?.attachment_token);
       setMsgs((m) => [...m, { role: "joc", text: res.reply, result: res }]);
+      // A plan awaiting approval is never auto-applied, by voice or otherwise.
+      return res.pending
+        ? `${res.reply} Say nothing yet — approve it on screen.`
+        : res.reply;
     } catch (e: any) {
-      setMsgs((m) => [...m, { role: "joc", text: "I hit an error: " + e.message }]);
-    } finally { setBusy(false); }
+      const msg = "Lost the thread — " + e.message;
+      setMsgs((m) => [...m, { role: "joc", text: msg }]);
+      return msg;
+    } finally {
+      setBusy(false);
+      // One instruction per attachment: the user re-attaches to do more.
+      setAttached(null);
+    }
+  }
+
+  async function pickFile(file: File | undefined) {
+    if (!file) return;
+    setAttachError(""); setUploading(true);
+    try {
+      setAttached(await api.uploadAttachment(file));
+    } catch (e: any) {
+      setAttachError(e.message || "I couldn't read that file.");
+      setAttached(null);
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
   }
 
   async function approve(token: string) {
@@ -89,6 +130,31 @@ export default function JocastaPage() {
           progress before I answer — and I&rsquo;ll show you anything destructive before I do it.
         </p>
 
+        <div className="tabs" style={{ marginTop: 20 }}>
+          <button className={"tab" + (mode === "text" ? " on" : "")}
+            onClick={() => setMode("text")}>Type</button>
+          <button className={"tab" + (mode === "voice" ? " on" : "")}
+            onClick={() => setMode("voice")}>Speak</button>
+        </div>
+
+        {mode === "voice" && (
+          <div className="card" style={{ marginTop: 16 }}>
+            <VoiceOrb
+              state={busy && voice.state === "idle" ? "thinking" : voice.state}
+              transcript={voice.transcript}
+              error={voice.error}
+              supported={voice.support.recognition}
+              reason={voice.support.reason}
+              speakReplies={voice.speakReplies}
+              onToggleSpoken={voice.setSpokenReplies}
+              onStart={voice.listen}
+              onStop={voice.stop}
+              onStopSpeaking={voice.stopSpeaking}
+              onRetry={voice.reset}
+            />
+          </div>
+        )}
+
         <div style={{ marginTop: 24, display: "flex", flexDirection: "column", gap: 12, minHeight: 220 }}>
           {msgs.length === 0 && (
             <div className="card">
@@ -115,15 +181,12 @@ export default function JocastaPage() {
                   <div className="dot-on" />
                   <div style={{ flex: 1 }}>
                     <div className="plan-lines" style={{ color: "var(--text)", fontWeight: 500 }}>{m.text}</div>
-                    {r && (r.calls.length > 0 || (r.context_used?.length ?? 0) > 0) && (
-                      <div className="mini" style={{ marginTop: 6 }}>
-                        {r.calls.length > 0 && (
-                          <>{r.calls.map((c) => `${c.tool}${c.ok ? "" : " (failed)"}`).join(" · ")} · </>
-                        )}
-                        via {r.planner}
-                        {r.context_used?.length ? ` · read ${r.context_used.join(", ")}` : ""}
-                      </div>
-                    )}
+                    {/* No "via rules · read learning · memory" line: it reads as a
+                        console trace rather than a conversation. What actually
+                        changed is shown by the module chips below, and anything
+                        that failed is surfaced explicitly. The full context a
+                        reply was built from is still available at
+                        GET /jocasta/context for when it's genuinely needed. */}
                     {v && v.failed > 0 && (
                       <div className="mini" style={{ marginTop: 6, color: "var(--red)" }}>
                         {v.succeeded}/{v.attempted} applied · {v.failures.map((f) => `${f.tool}: ${f.error}`).join("; ")}
@@ -181,8 +244,68 @@ export default function JocastaPage() {
           )}
         </div>
 
+        {(attached || uploading || attachError) && (
+          <div className={"attached" + (attachError ? " bad" : "")}>
+            {uploading && <><div className="spinner" /><div>Reading the file…</div></>}
+
+            {attachError && (
+              <>
+                <Icon.x s={16} />
+                <div style={{ flex: 1 }}>{attachError}</div>
+                <button className="iconbtn sm" aria-label="Dismiss"
+                  onClick={() => setAttachError("")}><Icon.x s={13} /></button>
+              </>
+            )}
+
+            {attached && !uploading && (
+              <>
+                <Icon.file s={17} />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div className="attached-name">{attached.filename}</div>
+                  <div className="mini">
+                    {attached.pages} page(s)
+                    {attached.found.classes > 0 && ` · ${attached.found.classes} class slot(s)`}
+                    {attached.found.modules > 0 &&
+                      ` · ${attached.found.modules} module(s), ${attached.found.concepts} concept(s)`}
+                    {!attached.found.classes && !attached.found.modules &&
+                      " · no timetable or syllabus structure recognised"}
+                  </div>
+                </div>
+                <button className="iconbtn sm" aria-label="Remove attachment"
+                  onClick={() => setAttached(null)}><Icon.x s={13} /></button>
+              </>
+            )}
+          </div>
+        )}
+
+        {attached && !busy && (
+          <div className="chips" style={{ marginTop: 10 }}>
+            {attached.found.classes > 0 && (
+              <button className="chip" onClick={() => send("add this timetable to my planner")}>
+                Add these classes
+              </button>
+            )}
+            {attached.found.modules > 0 && (
+              <button className="chip" onClick={() => send("build the course modules from this syllabus")}>
+                Build course modules
+              </button>
+            )}
+            <button className="chip" onClick={() => send("what does this say?")}>
+              What&rsquo;s in it?
+            </button>
+          </div>
+        )}
+
         <div className="capture" style={{ marginTop: 12 }}>
-          <input placeholder="Ask JOCasta…" value={text} aria-label="Message JOCasta"
+          <input ref={fileRef} type="file" hidden
+            accept=".pdf,.txt,.md,.csv,application/pdf,text/plain"
+            onChange={(e) => pickFile(e.target.files?.[0])} />
+          <button className="iconbtn" aria-label="Attach a file" title="Attach a PDF or text file"
+            onClick={() => fileRef.current?.click()} disabled={uploading}>
+            <Icon.clip s={17} />
+          </button>
+          <input placeholder={attached ? "What should I do with it?" : "Ask JOCasta…"}
+            value={text} aria-label="Message JOCasta"
             onChange={(e) => setText(e.target.value)} onKeyDown={(e) => e.key === "Enter" && send()} />
           <button className="mic" aria-label="Voice"><Icon.mic s={18} /></button>
           <button className="send" aria-label="Send" onClick={() => send()} disabled={busy || !text.trim()}>

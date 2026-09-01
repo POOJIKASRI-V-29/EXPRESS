@@ -8,8 +8,10 @@ import { useAuth } from "@/lib/auth";
 export default function LoginPage() {
   const { login } = useAuth();
   const router = useRouter();
-  const [email, setEmail] = useState("demo@express.os");
-  const [password, setPassword] = useState("expressdemo");
+  // Empty, not pre-filled. This page is on a public URL: a seeded credential
+  // shown here is a working key to the whole account for anyone who opens it.
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [err, setErr] = useState("");
   const [busy, setBusy] = useState(false);
 
@@ -31,19 +33,18 @@ export default function LoginPage() {
           </div>
           <div className="field">
             <label>Email</label>
-            <input value={email} onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
+            <input type="email" autoComplete="username" inputMode="email" autoCapitalize="none"
+                   value={email} onChange={(e) => setEmail(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
           </div>
           <div className="field">
             <label>Password</label>
-            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
+            <input type="password" autoComplete="current-password"
+                   value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} />
           </div>
           {err && <div className="err">{err}</div>}
           <button className="btn primary" style={{ width: "100%", marginTop: 20, justifyContent: "center" }} onClick={submit} disabled={busy}>
             {busy ? "Authenticating…" : "Initiate Session"}
           </button>
-          <div style={{ color: "var(--text-3)", fontSize: 12, marginTop: 16, textAlign: "center" }}>
-            Seeded demo: demo@express.os / expressdemo
-          </div>
         </div>
       </div>
     </>

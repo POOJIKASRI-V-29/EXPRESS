@@ -1,0 +1,23 @@
+# Production image. The dev Dockerfile alongside this one is unchanged and is
+# still what docker-compose builds locally.
+#
+# The only real differences: the port comes from $PORT (Railway assigns one per
+# service and it is not 8000), and migrations run before the server accepts
+# traffic so a deploy can never serve against an un-migrated schema.
+FROM python:3.12-slim
+
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        gcc libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY . .
+
+# Railway injects PORT; 8000 is only the local fallback.
+ENV PORT=8000
+CMD ["sh", "-c", "python -m app.prestart && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

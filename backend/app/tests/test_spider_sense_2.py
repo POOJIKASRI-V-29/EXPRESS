@@ -27,7 +27,7 @@ def _by_kind(db, user, kind):
 def test_every_signal_explains_itself_and_suggests_an_action(db_session):
     """The rule that keeps the tray worth reading."""
     u = _user(db_session)
-    db_session.add(Course(user_id=u.id, name="UI/UX Design", attendance=60))
+    db_session.add(Course(user_id=u.id, name="UI/UX Design", attended_classes=60, total_classes=100, attendance=60))
     db_session.add(Assignment(user_id=u.id, title="Overdue essay",
                               due_at=now() - timedelta(days=2), est_minutes=60))
     db_session.add(Budget(user_id=u.id, category="Food", monthly_limit=100))
@@ -47,7 +47,7 @@ def test_every_signal_explains_itself_and_suggests_an_action(db_session):
 
 def test_signals_are_ordered_most_severe_first(db_session):
     u = _user(db_session)
-    db_session.add(Course(user_id=u.id, name="Course A", attendance=50))     # action
+    db_session.add(Course(user_id=u.id, name="Course A", attended_classes=50, total_classes=100, attendance=50))     # action
     h = Habit(user_id=u.id, title="Read", target_per_week=7)                  # info
     db_session.add(h); db_session.flush()
     for d in range(1, 5):
@@ -119,12 +119,14 @@ def test_short_streaks_are_not_nagged_about(db_session):
 def test_resolved_signals_stop_nagging(db_session):
     """A condition that no longer holds must clear itself."""
     u = _user(db_session)
-    c = Course(user_id=u.id, name="Slipping", attendance=60)
+    c = Course(user_id=u.id, name="Slipping", attended_classes=60, total_classes=100, attendance=60)
     db_session.add(c); db_session.commit()
     ss.scan(db_session, u)
     assert _by_kind(db_session, u, "attendance")
 
-    c.attendance = 95
+    # Attendance is counted now, so clearing the condition means changing the
+    # counts — setting the cached percent alone would not be truthful.
+    c.attended_classes, c.total_classes, c.attendance = 95, 100, 95
     db_session.commit()
     ss.scan(db_session, u)
     assert not _by_kind(db_session, u, "attendance")
@@ -132,7 +134,7 @@ def test_resolved_signals_stop_nagging(db_session):
 
 def test_scan_is_idempotent(db_session):
     u = _user(db_session)
-    db_session.add(Course(user_id=u.id, name="Slipping", attendance=60))
+    db_session.add(Course(user_id=u.id, name="Slipping", attended_classes=60, total_classes=100, attendance=60))
     db_session.commit()
     ss.scan(db_session, u)
     first = db_session.query(Notification).filter(Notification.user_id == u.id).count()
@@ -143,7 +145,7 @@ def test_scan_is_idempotent(db_session):
 
 def test_a_dismissed_signal_stays_dismissed(db_session):
     u = _user(db_session)
-    db_session.add(Course(user_id=u.id, name="Slipping", attendance=60))
+    db_session.add(Course(user_id=u.id, name="Slipping", attended_classes=60, total_classes=100, attendance=60))
     db_session.commit()
     ss.scan(db_session, u)
     n = _by_kind(db_session, u, "attendance")[0]
@@ -157,7 +159,7 @@ def test_a_dismissed_signal_stays_dismissed(db_session):
 def test_signal_volume_is_capped(db_session):
     u = _user(db_session)
     for i in range(60):
-        db_session.add(Course(user_id=u.id, name=f"Course {i}", attendance=40))
+        db_session.add(Course(user_id=u.id, name=f"Course {i}", attended_classes=40, total_classes=100, attendance=40))
     db_session.commit()
     ss.scan(db_session, u)
     assert len(ss.active(db_session, u)) <= ss.MAX_ACTIVE_SIGNALS
@@ -165,7 +167,7 @@ def test_signal_volume_is_capped(db_session):
 
 def test_one_broken_detector_does_not_blind_the_others(db_session, monkeypatch):
     u = _user(db_session)
-    db_session.add(Course(user_id=u.id, name="Slipping", attendance=60))
+    db_session.add(Course(user_id=u.id, name="Slipping", attended_classes=60, total_classes=100, attendance=60))
     db_session.commit()
 
     def explode(db, user):
@@ -178,7 +180,7 @@ def test_one_broken_detector_does_not_blind_the_others(db_session, monkeypatch):
 
 def test_signals_stay_scoped_to_their_owner(db_session):
     a, b = _user(db_session, "sa@x.com"), _user(db_session, "sb@x.com")
-    db_session.add(Course(user_id=a.id, name="A's course", attendance=40))
+    db_session.add(Course(user_id=a.id, name="A's course", attended_classes=40, total_classes=100, attendance=40))
     db_session.commit()
     ss.scan(db_session, a)
     ss.scan(db_session, b)

@@ -32,6 +32,8 @@ services:
       SECRET_KEY: ${SECRET_KEY:?set SECRET_KEY in .env}
       FRONTEND_ORIGIN: ${FRONTEND_ORIGIN:-http://localhost:4310}
       LOCAL_TZ: ${LOCAL_TZ:-UTC}
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-gemini-3.5-flash}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       JOCASTA_MODEL: ${JOCASTA_MODEL:-claude-opus-5}
       DEMO_EMAIL: ${DEMO_EMAIL:-demo@express.os}

@@ -93,11 +93,19 @@ def ready(response: Response):
         log(logger, logging.ERROR, "readiness: database unreachable", error=type(exc).__name__)
         checks["database"] = {"ok": False, "error": type(exc).__name__}
 
-    # Not a failure: JOCasta falls back to the deterministic planner without a key.
+    # Not a failure either way: JOCasta falls back to the deterministic layer.
+    # But "a key is set" is not the same as "the key works", and conflating them
+    # turns a billing or credential problem into an apparent wiring problem.
+    from app.jocasta import brain
+    state = brain.status()
     checks["jocasta_llm"] = {
-        "ok": True,
-        "planner": "llm" if settings.ANTHROPIC_API_KEY else "rules",
-        "model": settings.JOCASTA_MODEL if settings.ANTHROPIC_API_KEY else None,
+        "ok": True,                        # the app serves regardless
+        "provider": state["provider"],
+        "configured": state["configured"],
+        "working": state["working"],       # True / False / None (not yet tried)
+        "answering_with": state["using"],  # "llm" | "rules" | "unverified"
+        "model": state["model"],
+        "detail": state["detail"],
     }
 
     ready_now = all(c.get("ok") for c in checks.values())

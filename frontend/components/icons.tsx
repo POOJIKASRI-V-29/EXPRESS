@@ -34,5 +34,7 @@ export const Icon = {
   link: (p: any) => <S {...p}><path d="M10 13.5a4 4 0 0 0 5.7 0l2.8-2.8a4 4 0 1 0-5.7-5.7L11.4 6.4" /><path d="M14 10.5a4 4 0 0 0-5.7 0l-2.8 2.8a4 4 0 1 0 5.7 5.7l1.4-1.4" /></S>,
   x: (p: any) => <S {...p}><path d="M6 6 18 18M18 6 6 18" /></S>,
   chev: (p: any) => <S {...p}><path d="m9 6 6 6-6 6" /></S>,
+  clip: (p: any) => <S {...p}><path d="M21 11.5 12.5 20a5 5 0 0 1-7-7l8-8a3.5 3.5 0 0 1 5 5l-8 8a2 2 0 0 1-3-3l7.5-7.5" /></S>,
+  file: (p: any) => <S {...p}><path d="M6 3h8l4 4v14H6Z" /><path d="M14 3v4h4" /></S>,
 };
 export type IconName = keyof typeof Icon;

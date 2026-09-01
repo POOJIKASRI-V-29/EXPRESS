@@ -53,6 +53,20 @@ def parse_when(text: str, default_hour=DEFAULT_HOUR):
         if m:
             hour, minute = int(m.group(1)), int(m.group(2))
             span = m.group(0)
+        else:
+            # A bare hour ("make it 8"). Resolved to the *next* occurrence of
+            # that hour on a 24-hour clock — predictable and explainable,
+            # rather than guessing that the user meant evening.
+            m = re.search(r"\bat\s+(\d{1,2})\b(?!\s*:)", t)
+            if m:
+                h12 = int(m.group(1)) % 24
+                candidates = [h12, (h12 + 12) % 24] if h12 < 12 else [h12]
+                nowl = local_now()
+                hour = next((c for c in sorted(candidates)
+                             if c > nowl.hour or (c == nowl.hour and nowl.minute < 5)),
+                            candidates[0])
+                minute = 0
+                span = m.group(0)
 
     m = re.search(r"\bin\s+(\d+)\s*(hour|hr|minute|min)s?\b", t)
     if m:
@@ -87,12 +101,77 @@ def parse_when(text: str, default_hour=DEFAULT_HOUR):
     return _at_local(day_offset, hour if hour is not None else default_hour, minute or 0), span
 
 
+def _clock(text: str) -> tuple[int | None, int]:
+    """(hour, minute) from "at 9", "9am", "14:30". Bare hours below 8 are read
+    as afternoon — nobody schedules a 2am lecture."""
+    m = re.search(r"\b(?:at\s+)?(\d{1,2})(?::(\d{2}))?\s*(am|pm)\b", text)
+    if m:
+        hour = int(m.group(1)) % 12
+        if m.group(3) == "pm":
+            hour += 12
+        return hour, int(m.group(2) or 0)
+    m = re.search(r"\b(?:at\s+)?(\d{1,2}):(\d{2})\b", text)
+    if m:
+        return int(m.group(1)) % 24, int(m.group(2))
+    m = re.search(r"\bat\s+(\d{1,2})\b", text)
+    if m:
+        h = int(m.group(1)) % 24
+        return (h + 12 if h < 8 else h), 0
+    return None, 0
+
+
 def _strip(text: str, *fragments) -> str:
     out = text
     for f in fragments:
         if f:
             out = re.sub(re.escape(f), "", out, flags=re.I)
     return re.sub(r"\s{2,}", " ", out).strip(" ,.-—:")
+
+
+# The imperative the user opened with is an instruction to JOCasta, not part of
+# the thing being created — "add DSA practice tomorrow at 7" is a task called
+# "DSA practice", not one called "Add DSA practice tomorrow at 7am".
+_LEAD_VERB = re.compile(
+    r"^(?:please\s+)?(?:can you\s+|could you\s+)?"
+    r"(?:add|create|schedule|book|set ?up|put|make|new|remind me to|"
+    r"block out|pencil in|note down)\s+"
+    r"(?:a |an |the |some |my )?", re.I)
+
+# Whatever time words survive the span removal — day names, parts of the day,
+# and a bare clock time, in any order and with their prepositions.
+_TRAILING_TIME = re.compile(
+    r"\s*(?:\b(?:on|at|for|by|this|next|in the)\b\s*)*"
+    r"(?:\b(?:today|tonight|tomorrow|day after tomorrow|next week|"
+    r"monday|tuesday|wednesday|thursday|friday|saturday|sunday|"
+    r"morning|afternoon|evening|night)\b"
+    r"|\d{1,2}(?::\d{2})?\s*(?:am|pm)\b"
+    r"|\d{1,2}:\d{2}\b)"
+    r"\s*$", re.I)
+
+# "a new task called laundry" -> "laundry"
+_CALLED = re.compile(r"^(?:new\s+)?(?:task|item|reminder|thing|event)\s+"
+                     r"(?:called|named|titled)\s+", re.I)
+# A dangling preposition once the time behind it has been removed.
+_TRAILING_PREP = re.compile(r"\s+\b(?:on|at|for|by|to|in|this|next)\b\s*$", re.I)
+
+
+def _title_from(text: str, span: str) -> str:
+    """Turn a spoken instruction into the name of the thing it creates.
+
+    The imperative and the timing are addressed to JOCasta; only what is left
+    is the thing itself.
+    """
+    body = _strip(text, span)
+    body = _LEAD_VERB.sub("", body, count=1)
+    body = _CALLED.sub("", body, count=1)
+    # Time fragments can survive in any order, so strip repeatedly until stable.
+    for _ in range(4):
+        trimmed = _TRAILING_TIME.sub("", body).strip(" ,.-—:")
+        trimmed = _TRAILING_PREP.sub("", trimmed).strip(" ,.-—:")
+        if trimmed == body:
+            break
+        body = trimmed
+    return re.sub(r"\s{2,}", " ", body).strip(" ,.-—:")
 
 
 def _amount(t: str):
@@ -129,9 +208,25 @@ def plan(text: str) -> list[dict]:
         return [{"tool": "get_deadlines", "args": {}}]
     if re.search(r"\b(my plan|plan for today|today'?s plan|what'?s on today|agenda)\b", t):
         return [{"tool": "get_plan_today", "args": {}}]
+    # "do i have DBMS tomorrow" — a question about the timetable.
+    m = re.search(r"\bdo i have\b.{0,30}?\b(today|tomorrow|monday|tuesday|wednesday|"
+                  r"thursday|friday|saturday|sunday)\b", t)
+    if m:
+        return [{"tool": "get_schedule", "args": {"day": m.group(1)}}]
+    m = re.search(r"\b(?:classes?|lectures?|timetable|schedule)\b.{0,24}?"
+                  r"\b(today|tomorrow|monday|tuesday|wednesday|thursday|friday|"
+                  r"saturday|sunday)\b", t)
+    if m:
+        return [{"tool": "get_schedule", "args": {"day": m.group(1)}}]
+    m = re.search(r"\b(today|tomorrow|monday|tuesday|wednesday|thursday|friday|"
+                  r"saturday|sunday)\b.{0,24}?\b(classes?|lectures?|timetable)\b", t)
+    if m:
+        return [{"tool": "get_schedule", "args": {"day": m.group(1)}}]
     if re.search(r"\b(classes today|timetable|class schedule|my schedule)\b", t):
         return [{"tool": "get_schedule", "args": {}}]
-    if re.search(r"\b(attendance|am i short|college status)\b", t) and not re.search(r"\b(mark|attended|missed|skipped)\b", t):
+    if re.search(r"\b(attendance|am i short|college status)\b", t) \
+            and not re.search(r"\b(mark|attended|missed|skipped)\b", t) \
+            and not re.search(r"\b(set|correct|update|make)\b.*\battendance\b", t):
         return [{"tool": "get_college", "args": {}}]
     if re.search(r"\b(what should i worry|signals?|spider ?sense|anything urgent)\b", t):
         return [{"tool": "get_signals", "args": {}}]
@@ -154,6 +249,74 @@ def plan(text: str) -> list[dict]:
     if re.search(r"\b(my (tasks|todos)|what'?s on my list)\b", t):
         return [{"tool": "get_tasks", "args": {}}]
 
+    # ---- college: courses and the weekly timetable ----
+    # These sit ahead of the generic move/delete/create rules because they are
+    # more specific: "move my DBMS class to 10" is a timetable slot, not a task,
+    # and the generic rules would happily swallow it. They also mean the College
+    # workflow does not depend on the LLM being reachable — the free Gemini tier
+    # allows 20 requests a day, so the deterministic path is the one that runs.
+    m = re.search(r"\b(?:set|make|correct|update)\s+(?:my\s+)?(.+?)\s+attendance\s+"
+                  r"(?:to\s+)?(\d{1,4})\s*(?:/|out of|of)\s*(\d{1,4})\b", t)
+    if m:
+        return [{"tool": "set_attendance",
+                 "args": {"course": _strip(m.group(1), "course"),
+                          "attended_classes": int(m.group(2)),
+                          "total_classes": int(m.group(3))}}]
+
+    m = re.search(r"\b(?:add|put|schedule|create)\s+(?:an?\s+|my\s+|the\s+)?"
+                  r"(.+?)\s+(?:class|lecture|lab)\b(.*)$", t)
+    if m and re.search(r"\b(" + "|".join(WEEKDAYS) + r")\b", m.group(2)):
+        rest = m.group(2)
+        day = next(d for d in WEEKDAYS if re.search(rf"\b{d}\b", rest))
+        hour, minute = _clock(rest)
+        args = {"course": _strip(m.group(1), "class", "lecture", "lab"),
+                "day_of_week": WEEKDAYS[day]}
+        if hour is not None:
+            args["start_time"] = f"{hour:02d}:{minute:02d}"
+            args["end_time"] = f"{(hour + 1) % 24:02d}:{minute:02d}"
+        room = re.search(r"\b(?:in|room)\s+([a-z]{1,4}[- ]?\d{1,4})\b", rest)
+        if room:
+            args["room"] = room.group(1).upper()
+        return [{"tool": "schedule_class", "args": args}]
+
+    m = re.search(r"\b(?:move|shift|reschedule|push)\s+(?:my\s+|the\s+)?(.+?)\s+"
+                  r"(?:class|lecture|lab)\b(.*)$", t)
+    if m:
+        rest = m.group(2)
+        args = {"course": _strip(m.group(1), "class", "lecture", "lab")}
+        hour, minute = _clock(rest)
+        if hour is not None:
+            args["start_time"] = f"{hour:02d}:{minute:02d}"
+            args["end_time"] = f"{(hour + 1) % 24:02d}:{minute:02d}"
+        day = next((d for d in WEEKDAYS if re.search(rf"\b{d}\b", rest)), None)
+        if day:
+            args["day_of_week"] = WEEKDAYS[day]
+        if len(args) > 1:
+            return [{"tool": "reschedule_class", "args": args}]
+
+    m = re.search(r"\b(?:remove|delete|drop|cancel)\s+(?:my\s+|the\s+)?(.+?)\s+"
+                  r"(?:class|lecture|lab)\b", t)
+    if m:
+        return [{"tool": "delete_class",
+                 "args": {"course": _strip(m.group(1), "class", "lecture", "lab",
+                                           "that", "this", "the")}}]
+
+    # "delete Database Systems from my courses" — the word course is required so
+    # this can never eat an ordinary "delete <task>".
+    m = re.search(r"\b(?:delete|remove|drop)\s+(?:the\s+|my\s+)?course\s+(?:called\s+)?(.+)$", t) \
+        or re.search(r"\b(?:delete|remove|drop)\s+(?:the\s+|my\s+)?(.+?)"
+                     r"\s+(?:course\b|from my courses\b)", t)
+    if m:
+        return [{"tool": "delete_course", "args": {"course": _strip(m.group(1), "course")}}]
+
+    m = re.search(r"\b(?:add|create|new)\s+(?:an?\s+|the\s+)?(?:course\s+(?:called\s+)?)?"
+                  r"(.+?)\s+to\s+my\s+courses\b", t) or \
+        re.search(r"\b(?:add|create|new)\s+(?:an?\s+)?course\s+(?:called\s+)?(.+)$", t)
+    if m:
+        name = _strip(m.group(1), "course")
+        return [{"tool": "create_course",
+                 "args": {"name": name[:1].upper() + name[1:]}}]
+
     # ---- notes ----
     m = re.search(r"\b(?:make a note|take a note|note down|jot down)\s*(?:that|:)?\s*(.+)", t)
     if m:
@@ -169,6 +332,45 @@ def plan(text: str) -> list[dict]:
                          "", t).strip()
         return [{"tool": "save_memory",
                  "args": {"text": (cleaned[:1].upper() + cleaned[1:]) if cleaned else text, "category": cat}}]
+
+    # ---- rescheduling ----
+    m = re.search(r"\b(?:move|push|shift|reschedule|postpone|bump)\s+"
+                  r"(?:the\s+|my\s+)?(.+?)\s+(?:to|until|till)\s+(.+)$", t)
+    if m:
+        target, when_txt = m.group(1).strip(), m.group(2).strip()
+        when, _span = parse_when(when_txt)
+        if when is None:
+            when, _span = parse_when("at " + when_txt)
+        if when:
+            target = _strip(target, "task", "item", "session")
+            if target in ("it", "that", "this", ""):
+                # Referential: the orchestrator injects the subject.
+                return [{"tool": "reschedule_task", "args": {"due_at": when.isoformat()}}]
+            return [{"tool": "reschedule_task_by_name",
+                     "args": {"query": target, "due_at": when.isoformat()}}]
+
+    # "make it 8" / "actually make that 9pm" — same move, different phrasing.
+    m = re.search(r"\b(?:actually\s+)?make\s+(it|that)\s+(.+)$", t)
+    if m:
+        when, _span = parse_when("at " + m.group(2).strip())
+        if when:
+            return [{"tool": "reschedule_task", "args": {"due_at": when.isoformat()}}]
+
+    # ---- deletion ----
+    # Memory deletion is addressed explicitly, so "delete memory <id>" never
+    # gets read as a planner item named "memory <id>".
+    m = re.search(r"\b(?:delete|remove|forget)\s+(?:the\s+)?memory\s+"
+                  r"([0-9a-fA-F-]{8,36})", t)
+    if m:
+        return [{"tool": "delete_memory", "args": {"memory_id": m.group(1)}}]
+
+    m = re.search(r"\b(?:delete|remove|cancel|get rid of|scrap|drop)\s+"
+                  r"(?:the\s+|my\s+)?(.+?)(?:\s+(?:task|item|from my planner|"
+                  r"from the planner))?$", t)
+    if m:
+        target = _strip(m.group(1), "task", "item", "the", "my")
+        if target and target not in ("it", "that", "this"):
+            return [{"tool": "delete_task", "args": {"query": target}}]
 
     # ---- completion by name ----
     m = re.search(r"\b(?:i )?(?:just )?(?:finished|completed|done with|mark(?:ed)? (?:as )?done)\s+(.+)", t)
@@ -214,6 +416,20 @@ def plan(text: str) -> list[dict]:
             minutes *= 60
         topic = _strip(m.group(1), mins.group(0) if mins else "", "for", "about")
         return [{"tool": "log_study", "args": {"topic": topic, "minutes": minutes}}]
+    # "add DSA study tomorrow at 7" — the topic leads and the verb follows, so
+    # "study (.+)" would capture the time instead of the subject.
+    # The leading article is consumed by the pattern, not stripped afterwards:
+    # _strip works on substrings, so stripping "a" would turn "DSA" into "DS".
+    # Only "study"/"revision" — "add DSA practice" has always been an ordinary
+    # task and stays one; widening this would silently reclassify it.
+    m = re.search(r"^(?:add|schedule|put)\s+(?:a\s+|an\s+|some\s+)?(.+?)\s+"
+                  r"(?:study|revision)\b(.*)$", t)
+    if m:
+        when, span = parse_when(m.group(2) or t, default_hour=EVENING_HOUR)
+        topic = m.group(1).strip()
+        if when and topic:
+            return [{"tool": "schedule_study",
+                     "args": {"topic": topic, "due_at": when.isoformat()}}]
     m = re.search(r"\b(?:revise|study|review)\s+(.+)", t)
     if m:
         when, span = parse_when(t, default_hour=EVENING_HOUR)
@@ -222,6 +438,24 @@ def plan(text: str) -> list[dict]:
             return [{"tool": "schedule_study", "args": {"topic": topic, "due_at": when.isoformat()}}]
 
     # ---- college ----
+    m = re.search(r"\b(?:add|save|set)\s+(?:the\s+)?(?:google\s+)?drive\s+"
+                  r"(?:link\s+)?(?:to|for|on)\s+(.+)", t)
+    if m:
+        url = re.search(r"(https?://\S+)", text)
+        target = _strip(m.group(1), url.group(1) if url else "")
+        if url:
+            return [{"tool": "set_course_drive",
+                     "args": {"course": target, "url": url.group(1)}}]
+    m = re.search(r"\b(?:tick off|mark)\s+(.+?)\s+(?:as\s+)?(?:complete|done)"
+                  r"(?:\s+in\s+(.+))?$", t)
+    if m:
+        args = {"topic": m.group(1).strip()}
+        if m.group(2):
+            args["course"] = m.group(2).strip()
+        return [{"tool": "complete_topic", "args": args}]
+    m = re.search(r"\bhow(?:'s| is)\s+(?:my\s+)?(.+?)\s+going\b", t)
+    if m:
+        return [{"tool": "get_course", "args": {"course": m.group(1).strip()}}]
     m = re.search(r"\b(attended|went to|missed|skipped)\s+(.+)", t)
     if m:
         return [{"tool": "mark_attendance",
@@ -262,14 +496,14 @@ def plan(text: str) -> list[dict]:
         when, span = parse_when(body)
         if not when:
             when, span = parse_when(t)
-        body = _strip(body, span, "on", "at")
+        body = _title_from(body, span) or _strip(body, span, "on", "at")
         return [{"tool": "create_reminder",
                  "args": {"title": body[:1].upper() + body[1:],
                           "remind_at": (when or _at_local(1)).isoformat()}}]
 
     # ---- generic task, with whatever time we can find ----
     when, span = parse_when(t)
-    title = _strip(text, span) or text.strip()
+    title = _title_from(text, span) or _strip(text, span) or text.strip()
     title = title[:1].upper() + title[1:]
     if re.search(r"\b(buy|order|shampoo|grocery|groceries|shop)\b", t):
         return [{"tool": "create_task",
