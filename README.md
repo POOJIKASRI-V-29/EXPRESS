@@ -112,8 +112,13 @@ PostgreSQL
 The AI model never touches the database directly. It proposes; the application validates, asks, and executes.
 
 ## Screenshots
+<img width="1470" height="923" alt="Screenshot 2026-09-02 at 9 36 37 PM" src="https://github.com/user-attachments/assets/fd90b7b9-d94a-4b05-9f86-04ebf3a9f12b" />
 
-<!-- Drag screenshots into this section on GitHub to embed them -->
+<img width="1470" height="923" alt="Screenshot 2026-09-02 at 9 38 09 PM" src="https://github.com/user-attachments/assets/7fb8b379-2f4b-44de-a9e0-3f3ab0c0beb2" />
+
+<img width="1470" height="713" alt="Screenshot 2026-09-02 at 9 40 17 PM" src="https://github.com/user-attachments/assets/cf7fba54-52ad-4930-9763-d2bbb169b265" />
+
+
 
 ## Notes
 
